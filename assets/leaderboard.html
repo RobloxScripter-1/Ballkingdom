@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ball Kingdom Wars - Leaderboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a0a00;
+      font-family: Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+    h1 {
+      color: #ffdd44;
+      font-size: 26px;
+      text-align: center;
+      margin-bottom: 4px;
+      text-shadow: 0 0 10px #ffdd4466;
+    }
+    .subtitle {
+      color: #aaa;
+      font-size: 12px;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .win-toast {
+      background: #ffdd44;
+      color: #000;
+      font-weight: bold;
+      font-size: 15px;
+      border-radius: 12px;
+      padding: 10px 20px;
+      margin-bottom: 16px;
+      text-align: center;
+      display: none;
+    }
+    .win-toast.show { display: block; }
+    .board {
+      background: #2a1500;
+      border: 2px solid #7a5010;
+      border-radius: 14px;
+      width: 100%;
+      max-width: 420px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .board-header {
+      background: #7a5010;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      color: #ffdd44;
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .kingdom-row {
+      display: flex;
+      align-items: center;
+      padding: 11px 16px;
+      border-bottom: 1px solid #3a2000;
+      gap: 10px;
+    }
+    .kingdom-row:last-child { border-bottom: none; }
+    .rank {
+      color: #888;
+      font-size: 13px;
+      font-weight: bold;
+      width: 24px;
+      text-align: center;
+    }
+    .rank.gold   { color: #ffdd44; font-size: 17px; }
+    .rank.silver { color: #cccccc; font-size: 15px; }
+    .rank.bronze { color: #cd7f32; font-size: 14px; }
+    .dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid #ffffff44;
+      flex-shrink: 0;
+    }
+    .name {
+      flex: 1;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    .win-bar-wrap {
+      flex: 1;
+      background: #1a0a00;
+      border-radius: 4px;
+      height: 7px;
+      overflow: hidden;
+    }
+    .win-bar {
+      height: 100%;
+      border-radius: 4px;
+    }
+    .wins {
+      color: #ffdd44;
+      font-size: 17px;
+      font-weight: bold;
+      min-width: 36px;
+      text-align: right;
+    }
+    .total-games {
+      color: #888;
+      font-size: 12px;
+      text-align: center;
+      margin-bottom: 14px;
+    }
+    .add-section {
+      background: #2a1500;
+      border: 2px solid #7a5010;
+      border-radius: 14px;
+      padding: 14px;
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 14px;
+    }
+    .add-section h2 {
+      color: #ffdd44;
+      font-size: 14px;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    .kingdom-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .kb {
+      padding: 9px 13px;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      color: #fff;
+      text-shadow: 0 1px 2px #00000066;
+    }
+    .kb:active { opacity: 0.8; }
+    .back-btn {
+      background: #4488ff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 10px;
+    }
+    .reset-btn {
+      background: #333;
+      color: #ff4444;
+      border: 1px solid #ff4444;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      width: 100%;
+      max-width: 420px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffdd44;
+      color: #000;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<h1>👑 Ball Kingdom Wars</h1>
+<p class="subtitle">Win Leaderboard</p>
+
+<div class="win-toast" id="winToast"></div>
+<div class="total-games" id="totalGames">Total games: 0</div>
+
+<div class="board">
+  <div class="board-header">
+    <span>Kingdom</span>
+    <span>Wins</span>
+  </div>
+  <div id="leaderboard"></div>
+</div>
+
+<div class="add-section">
+  <h2>➕ Manually Record a Win</h2>
+  <div class="kingdom-btns" id="kingdomBtns"></div>
+</div>
+
+<button class="back-btn" onclick="window.location = 'main.html'">▶️ Back to Game</button>
+<button class="reset-btn" onclick="confirmReset()">🗑️ Reset All Scores</button>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const KINGDOMS = [
+  { name: 'Orange', color: '#ff8800' },
+  { name: 'Red',    color: '#ee2222' },
+  { name: 'Blue',   color: '#2255ff' },
+  { name: 'Cyan',   color: '#00ccee' },
+  { name: 'Pink',   color: '#ff44bb' },
+  { name: 'Yellow', color: '#ddcc00' },
+  { name: 'Green',  color: '#22bb22' },
+  { name: 'Purple', color: '#8822ee' }
+];
+
+function getWins() {
+  try { return JSON.parse(localStorage.getItem('bkw_wins') || '{}'); }
+  catch(e) { return {}; }
+}
+
+function saveWins(wins) {
+  localStorage.setItem('bkw_wins', JSON.stringify(wins));
+}
+
+function getTotalGames() {
+  return parseInt(localStorage.getItem('bkw_total') || '0');
+}
+
+function addWin(name, silent) {
+  const wins = getWins();
+  wins[name] = (wins[name] || 0) + 1;
+  saveWins(wins);
+  const total = getTotalGames() + 1;
+  localStorage.setItem('bkw_total', total);
+  if (!silent) showToast(`👑 ${name} wins recorded!`);
+  render();
+}
+
+function confirmReset() {
+  if (confirm('Reset all scores?')) {
+    localStorage.removeItem('bkw_wins');
+    localStorage.removeItem('bkw_total');
+    localStorage.removeItem('bkw_pendingWinner');
+    showToast('Scores reset!');
+    render();
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function getKingdomColor(name) {
+  const k = KINGDOMS.find(k => k.name === name);
+  return k ? k.color : '#ffffff';
+}
+
+function render() {
+  const wins   = getWins();
+  const total  = getTotalGames();
+  const sorted = [...KINGDOMS].sort((a, b) => (wins[b.name] || 0) - (wins[a.name] || 0));
+  const maxWins = Math.max(...sorted.map(k => wins[k.name] || 0), 1);
+
+  document.getElementById('totalGames').textContent = `Total games played: ${total}`;
+
+  const lb = document.getElementById('leaderboard');
+  lb.innerHTML = sorted.map((k, i) => {
+    const w = wins[k.name] || 0;
+    const pct = (w / maxWins * 100).toFixed(0);
+    const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    const rankSymbol = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+    return `
+      <div class="kingdom-row">
+        <div class="rank ${rankClass}">${rankSymbol}</div>
+        <div class="dot" style="background:${k.color}"></div>
+        <div class="name">${k.name}</div>
+        <div class="win-bar-wrap">
+          <div class="win-bar" style="width:${pct}%;background:${k.color}"></div>
+        </div>
+        <div class="wins">${w}</div>
+      </div>
+    `;
+  }).join('');
+
+  const btns = document.getElementById('kingdomBtns');
+  btns.innerHTML = KINGDOMS.map(k => `
+    <button class="kb" style="background:${k.color}" onclick="addWin('${k.name}')">
+      ${k.name}
+    </button>
+  `).join('');
+}
+
+// ---- AUTO RECORD WINNER FROM GAME ----
+window.addEventListener('load', () => {
+  const pending = localStorage.getItem('bkw_pendingWinner');
+  if (pending) {
+    localStorage.removeItem('bkw_pendingWinner');
+    addWin(pending, true); // add silently
+    const color = getKingdomColor(pending);
+    const toast = document.getElementById('winToast');
+    toast.textContent = `🏆 ${pending} wins this game! Win recorded!`;
+    toast.style.borderLeft = `6px solid ${color}`;
+    toast.classList.add('show');
+  }
+  render();
+});
+</script>
+</body>
+</html>

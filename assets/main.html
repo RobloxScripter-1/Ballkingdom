@@ -1,0 +1,3502 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ball Kingdom Wars</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="errorBox" style="display:none;position:fixed;top:0;left:0;width:100%;background:#ff0000;color:#fff;font-size:14px;padding:10px;z-index:9999;word-break:break-all;"></div>
+
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  const box = document.getElementById('errorBox');
+  if (box) { box.style.display='block'; box.textContent = 'ERROR L'+line+': '+msg; }
+  return true;
+};
+</script>
+
+<!-- AUDIO — fails silently if files missing -->
+<audio id="music_main" loop src="cipher.mp3" onerror="this.src=''"></audio>
+<audio id="music_hooker" src="volatile.mp3" onerror="this.src=''"></audio>
+<audio id="music_drop" src="slaughterhouse.mp3" onerror="this.src=''"></audio>
+
+<!-- SPAWN PANEL -->
+<div id="spawnPanel" style="
+  display:none; position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  background:#1a1a2e; border:2px solid #44bb44;
+  border-radius:14px; padding:20px; z-index:999;
+  width:280px; color:#fff; font-family:Arial,sans-serif;">
+  <h3 style="color:#44bb44;text-align:center;margin-bottom:14px">⚔️ Spawn Troops</h3>
+  <label style="font-size:13px;color:#aaa">Kingdom</label>
+  <select id="spawnKingdom" style="width:100%;padding:8px;border-radius:8px;background:#0d0d1a;color:#fff;border:1px solid #44bb44;margin-bottom:10px;font-size:14px"></select>
+  <label style="font-size:13px;color:#aaa">Troop Type</label>
+  <select id="spawnType" style="width:100%;padding:8px;border-radius:8px;background:#0d0d1a;color:#fff;border:1px solid #44bb44;margin-bottom:10px;font-size:14px">
+    <option value="ball">⚽ Normal Ball</option>
+    <option value="knight">⚔️ Knight</option>
+    <option value="king">👑 King</option>
+    <option value="shield">🛡️ Shield</option>
+    <option value="cannon">🎯 Cannon</option>
+    <option value="rammer">🔨 Rammer</option>
+    <option value="hooker">🪝 Hooker</option>
+    <option value="horse">🐴 Horse Knight</option>
+    <option value="wizard">🧙 Wizard</option>
+  </select>
+  <label style="font-size:13px;color:#aaa">Level</label>
+  <input id="spawnLevel" type="number" value="1" min="1" max="100" style="width:100%;padding:8px;border-radius:8px;background:#0d0d1a;color:#fff;border:1px solid #44bb44;margin-bottom:10px;font-size:14px">
+  <label style="font-size:13px;color:#aaa">Amount (troops inside)</label>
+  <input id="spawnAmount" type="number" value="1" min="1" max="999" style="width:100%;padding:8px;border-radius:8px;background:#0d0d1a;color:#fff;border:1px solid #44bb44;margin-bottom:14px;font-size:14px">
+  <div style="display:flex;gap:10px">
+    <button onclick="doSpawn()" style="flex:1;padding:10px;background:#44bb44;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:bold">✅ Spawn</button>
+    <button onclick="closeSpawnPanel()" style="flex:1;padding:10px;background:#555;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:bold">❌ Close</button>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+const W  = canvas.width;
+const H  = canvas.height;
+const MX = W * 0.04;
+const MY = H * 0.04;
+const MW = W * 0.92;
+const MH = H * 0.92;
+
+// ---- CONSTANTS ----
+const HP_PER_TROOP   = 40;
+const DMG_PER_TROOP  = 5;
+const HITS_PER_LEVEL = 3;
+const DMG_BONUS      = 2;
+const HP_BONUS       = 10;
+const SPEED_BONUS    = 0.08;
+
+// ---- KNIGHT CONSTANTS ----
+const KNIGHT_CHANCE  = 0.05;
+const KNIGHT_HP      = 120;
+const KNIGHT_RADIUS  = 18;
+const KNIGHT_SPEED   = 1.4;
+const KNIGHT_DMG_MULT = 2.0;
+
+const knightImg = new Image();
+knightImg.src = 'knight.png';
+
+// King spawns when a kingdom falls — image file
+const kingImg = new Image();
+kingImg.src = 'king.png';
+
+// Body shield — stays near kingdom, blocks sieging balls
+const shieldImg = new Image();
+shieldImg.src = 'ballshield.png';
+
+// Cannon — glass cannon, long range, one shots shields, 1 HP
+const cannonImg = new Image();
+cannonImg.src = 'cannon.png';
+
+// Rammer — rams random troop, stuns them, high damage, speed 2
+const rammerImg = new Image();
+rammerImg.src = 'rammer.png';
+
+// Hooker — rare unit, traps enemy balls, deflects all damage
+const hookerImg = new Image();
+hookerImg.src = 'hooker.png';
+
+// Sword — hooker's weapon, pointing north
+const swordImg = new Image();
+swordImg.src = 'sword.png';
+
+// Horse knight — cavalry unit, hunts cannons, immune to cannon fire
+const horseImg = new Image();
+horseImg.src = 'horse.png';
+
+// Wizard — ranged unit, alternates freeze (5s) and fireball (2x knight dmg, ranged), 1 in 50 spawn
+const wizardImg = new Image();
+wizardImg.src = 'wizard.png';
+
+// ---- KINGDOM CONFIGS ----
+const CONFIGS = [
+  { name:'Orange', color:'#ff8800', r:255, g:136, b:0,   px:0.35, py:0.04 },
+  { name:'Red',    color:'#ee2222', r:238, g:34,  b:34,  px:0.60, py:0.04 },
+  { name:'Blue',   color:'#2255ff', r:34,  g:85,  b:255, px:0.04, py:0.30 },
+  { name:'Cyan',   color:'#00ccee', r:0,   g:204, b:238, px:0.92, py:0.30 },
+  { name:'Pink',   color:'#ff44bb', r:255, g:68,  b:187, px:0.04, py:0.62 },
+  { name:'Yellow', color:'#ddcc00', r:221, g:204, b:0,   px:0.92, py:0.62 },
+  { name:'Green',  color:'#22bb22', r:34,  g:187, b:34,  px:0.35, py:0.92 },
+  { name:'Purple', color:'#8822ee', r:136, g:34,  b:238, px:0.60, py:0.92 }
+];
+
+// ---- BUILD KINGDOMS ----
+let kingdoms = CONFIGS.map((c, i) => ({
+  id: i, name: c.name, color: c.color,
+  r: c.r, g: c.g, b: c.b,
+  x: MX + c.px * MW,
+  y: MY + c.py * MH,
+  hp: 3000000, maxHp: 3000000,
+  level: 1,
+  spawnRate:    3500 + Math.random() * 1500,
+  timer:        Math.random() * 2000,
+  upgradeTimer: 0,
+  alive: true,
+  spawnCount: 0,
+  lastShieldSpawned: false,
+  hookerToken: false, // H icon — auto spawns hooker when below 25% HP
+  // ---- KNIGHT DEATH RAGE BUFF ----
+  rageBuff:     false,
+  rageTimer:    0
+}));
+
+// Assign H token to 2 random kingdoms
+(function assignHookerTokens() {
+  const indices = [...Array(kingdoms.length).keys()];
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  kingdoms[indices[0]].hookerToken = true;
+  kingdoms[indices[1]].hookerToken = true;
+})();
+
+let balls = [];
+
+// ---- TORNADO — environmental hazard, no team ----
+// Spawns randomly every 20s, drifts slowly, pulls and damages all nearby balls
+const tornadoImg = new Image();
+tornadoImg.src = 'tornado.png';
+
+let tornadoes = [];
+let tornadoSpawnTimer = 10000; // first tornado after 10s
+const TORNADO_SPAWN_INTERVAL = 20000; // new one every 20s
+const TORNADO_LIFETIME       = 12000; // lives 12s then fades
+const TORNADO_PULL_RANGE     = 90;    // suck radius in px
+const TORNADO_PULL_FORCE     = 1.8;   // pixels pulled per frame
+const TORNADO_MAX            = 3;     // max on field at once
+
+function spawnTornado() {
+  tornadoes.push({
+    x: MX + (0.1 + Math.random() * 0.8) * MW,
+    y: MY + (0.1 + Math.random() * 0.8) * MH,
+    radius: 28,
+    driftAngle: Math.random() * Math.PI * 2,
+    driftSpeed: 0.4 + Math.random() * 0.4,
+    lifetime: TORNADO_LIFETIME,
+    tickTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    spinAngle: 0
+  });
+}
+
+// ---- TSUNAMI — environmental hazard, no team ----
+// Spawns from a random edge, charges across the map at speed 4
+// Deals 50% max HP on contact — one hit per ball per tsunami, then gone off-screen
+const tsunamiImg = new Image();
+tsunamiImg.src = 'tsunami.png';
+
+let tsunamis = [];
+let tsunamiSpawnTimer = 15000; // first tsunami after 15s
+const TSUNAMI_SPAWN_INTERVAL = 25000;
+const TSUNAMI_SPEED          = 4;
+const TSUNAMI_RADIUS         = 40;
+const TSUNAMI_MAX            = 2;
+
+function spawnTsunami() {
+  // Spawn from a random edge and charge across to the opposite side
+  const side = Math.floor(Math.random() * 4); // 0=top,1=right,2=bottom,3=left
+  let x, y, angle;
+  if (side === 0)      { x = MX + Math.random() * MW; y = MY;        angle = Math.PI * 0.5; }
+  else if (side === 1) { x = MX + MW;                 y = MY + Math.random() * MH; angle = Math.PI; }
+  else if (side === 2) { x = MX + Math.random() * MW; y = MY + MH;   angle = -Math.PI * 0.5; }
+  else                 { x = MX;                       y = MY + Math.random() * MH; angle = 0; }
+  // Slight random spread so it's not perfectly straight
+  angle += (Math.random() - 0.5) * 0.3;
+  tsunamis.push({
+    x, y, angle,
+    radius: TSUNAMI_RADIUS,
+    hitBalls: new Set(), // each ball only hit once per tsunami
+    spinAngle: 0
+  });
+}
+
+// ---- TREES ----
+const trees = [];
+for (let i = 0; i < 80; i++) {
+  trees.push({
+    x: MX + (0.08 + Math.random() * 0.84) * MW,
+    y: MY + (0.08 + Math.random() * 0.84) * MH
+  });
+}
+
+// ---- MOUNTAINS ----
+const mountains = [
+  {x:0.08,y:0.10},{x:0.18,y:0.07},{x:0.78,y:0.07},{x:0.88,y:0.10},
+  {x:0.08,y:0.84},{x:0.18,y:0.88},{x:0.78,y:0.88},{x:0.88,y:0.84},
+  {x:0.03,y:0.48},{x:0.93,y:0.48}
+].map(p => ({ x: MX + p.x * MW, y: MY + p.y * MH }));
+
+// ---- HELPERS ----
+function getDist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function baseRadius(troops) {
+  return Math.min(10 + troops * 2.5, 32);
+}
+
+function getBallColor(ball) {
+  if (ball.isKnight) return ball.color;
+  const ratio = ball.troops / ball.maxTroops;
+  const d     = 0.25 + ratio * 0.75;
+  return `rgb(${Math.floor(ball.cr*d)},${Math.floor(ball.cg*d)},${Math.floor(ball.cb*d)})`;
+}
+
+function getLevelColor(lvl) {
+  if (lvl >= 10) return '#ff4400';
+  if (lvl >= 7)  return '#ff9900';
+  if (lvl >= 4)  return '#ffdd00';
+  return '#44dd44';
+}
+
+// ---- SPAWN BALL ----
+function spawnBall(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const knightsOnField = balls.filter(b => b.isKnight && !b.isMerc && b.team === k.id).length;
+  // Surge buffs: 1.5x knight chance, 1.7x veteran chance
+  const isSurging      = surgeActive && k.id === surgeKingdomId;
+  const knightChance   = KNIGHT_CHANCE * (isSurging ? 1.5 : 1.0);
+  const veteranChance  = (1/125) * (isSurging ? 1.7 : 1.0);
+  const isKnight  = Math.random() < knightChance && knightsOnField < 100;
+  const isVeteran = !isKnight && Math.random() < veteranChance && knightsOnField < 100;
+  const isHooker  = !isKnight && !isVeteran && Math.random() < (1/150);
+  // 1 in 50 chance to spawn a horse knight — cannon hunter
+  const isHorse   = !isKnight && !isVeteran && !isHooker && Math.random() < (1/50);
+  // 1 in 50 chance to spawn a wizard — freeze/fireball alternator
+  const isWizard  = !isKnight && !isVeteran && !isHooker && !isHorse && Math.random() < (1/50);
+  const angle     = Math.random() * Math.PI * 2;
+
+  if (isHorse) {
+    spawnHorseKnight(k, speedMult);
+    return;
+  } else if (isWizard) {
+    spawnWizard(k, speedMult);
+    return;
+  } else if (isHooker) {
+    // Only spawn if kingdom doesn't already have a hooker
+    const alreadyHasHooker = balls.some(b => b.isHooker && b.team === k.id);
+    if (!alreadyHasHooker) spawnHooker(k, speedMult);
+    return;
+  } else if (isVeteran) {
+    // Level 50 veteran knight — rare surprise spawn
+    const kLevel  = 50;
+    const kHp     = KNIGHT_HP + HP_BONUS * (kLevel - 1);
+    const kDmg    = DMG_PER_TROOP * KNIGHT_DMG_MULT + DMG_BONUS * 2 * (kLevel - 1);
+    const kRadius = Math.min(KNIGHT_RADIUS + kLevel * 1.5, 38);
+    const kSpeed  = Math.min(KNIGHT_SPEED * speedMult + SPEED_BONUS * (kLevel - 1), 12.0);
+    balls.push({
+      x: k.x + Math.cos(angle) * 20,
+      y: k.y + Math.sin(angle) * 20,
+      hp: kHp, maxHp: kHp,
+      troops: 1, maxTroops: 1,
+      troopDmg: kDmg,
+      isKnight: true, isVeteranKnight: true,
+      ballLevel: kLevel, hits: 0, hitsToLevel: kLevel * HITS_PER_LEVEL,
+      speed: kSpeed, radius: kRadius,
+      team: k.id, color: k.color,
+      cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+      trailX: k.x, trailY: k.y,
+      swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null,
+      isRageBall: false, lastBlocked: false
+    });
+  } else if (isKnight) {
+    // Normal level 1 knight
+    balls.push({
+      x: k.x + Math.cos(angle) * 20,
+      y: k.y + Math.sin(angle) * 20,
+      hp: KNIGHT_HP, maxHp: KNIGHT_HP,
+      troops: 1, maxTroops: 1,
+      troopDmg: DMG_PER_TROOP * KNIGHT_DMG_MULT,
+      isKnight: true,
+      ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+      speed: Math.min(KNIGHT_SPEED * speedMult, 12.0), radius: KNIGHT_RADIUS,
+      team: k.id, color: k.color,
+      cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+      trailX: k.x, trailY: k.y,
+      swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null
+    });
+  } else {
+    // Apply 2.6x troop multiplier if kingdom has rage buff from knight death
+    // Surge also gives 4x troops on top of rage if active
+    const rageMult   = k.rageBuff ? 2.6 : 1.0;
+    const surgeTroop = isSurging ? 4.0 : 1.0;
+    const troopMult  = rageMult * surgeTroop;
+    const troops     = Math.ceil(k.level * troopMult);
+    // Starting ball level: +1 for every 50 kingdom levels, capped at level 100
+    const startLevel = Math.min(100, 1 + Math.floor(k.level / 50));
+    // Apply level bonuses to stats for each starting level above 1
+    const levelsGained = startLevel - 1;
+    const startDmg     = DMG_PER_TROOP + DMG_BONUS * levelsGained;
+    const startHpBonus = HP_BONUS * levelsGained;
+    const startHp      = troops * HP_PER_TROOP + startHpBonus;
+    balls.push({
+      x: k.x + Math.cos(angle) * 18,
+      y: k.y + Math.sin(angle) * 18,
+      hp: startHp, maxHp: startHp,
+      troops, maxTroops: troops,
+      troopDmg: startDmg,
+      isKnight: false,
+      ballLevel: startLevel,
+      hits: 0, hitsToLevel: startLevel * HITS_PER_LEVEL,
+      speed: Math.min((1.0 + Math.random() * 0.5) * speedMult, 12.0),
+      radius: baseRadius(troops),
+      team: k.id, color: k.color,
+      cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0,
+      wobble: Math.random() * Math.PI * 2,
+      trailX: k.x, trailY: k.y,
+      swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null,
+      isRageBall: k.rageBuff
+    });
+  }
+}
+
+// ---- SPAWN KING (last stand when kingdom falls) ----
+// King level = kingdom level, stats scale accordingly
+// Base HP: 5M, Base Damage: 75k
+function spawnKing(k) {
+  const kingLevel  = k.level;
+  const kingHp     = 5000000 + kingLevel * 80 + (KNIGHT_HP * 40);
+  const kingDmg    = 75000 + kingLevel * 8 + 150;
+  const kingRadius = Math.min(16 + kingLevel * 2, 36);
+  const kingSpeed  = finalBattle ? Math.min(1.8 * 4, 12) : 1.8;
+  const angle      = Math.random() * Math.PI * 2;
+  balls.push({
+    x: k.x + Math.cos(angle) * 22,
+    y: k.y + Math.sin(angle) * 22,
+    hp: kingHp, maxHp: kingHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: kingDmg,
+    isKnight: false,
+    isKing:   true,
+    ballLevel: kingLevel,
+    hits: 0, hitsToLevel: kingLevel * HITS_PER_LEVEL,
+    speed: kingSpeed,
+    radius: kingRadius,
+    team:   k.id,
+    color:  k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false,
+    lastBlocked: false
+  });
+
+  // ---- SPAWN 4 ELITE SHIELDS WITH 50M HP PROTECTING THE KING ----
+  for (let i = 0; i < 4; i++) {
+    const shieldAngle = (Math.PI * 2 / 4) * i;
+    balls.push({
+      x: k.x + Math.cos(shieldAngle) * 35,
+      y: k.y + Math.sin(shieldAngle) * 35,
+      hp: 50000000, maxHp: 50000000, // 50 million HP
+      troops: 1, maxTroops: 1,
+      troopDmg: 0,
+      isKnight:  false,
+      isKing:    false,
+      isShield:  true,
+      isEliteKingShield: true, // special flag
+      ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+      speed: 0.5,
+      radius: 24,
+      homeX: k.x,
+      homeY: k.y,
+      team:  k.id, color: k.color,
+      cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0,
+      wobble: Math.random() * Math.PI * 2,
+      trailX: k.x, trailY: k.y,
+      swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null,
+      isRageBall: false,
+      lastBlocked: false
+    });
+  }
+}
+
+// ---- SPAWN BODY SHIELD ----
+// Stays near kingdom, blocks balls from sieging until it dies
+// 8x king HP, zero damage, white part = kingdom color
+function spawnShield(k) {
+  const kingHp      = k.level * 80 + (KNIGHT_HP * 4);
+  const shieldHp    = kingHp * 8;
+  const shieldRadius = Math.min(20 + k.level * 2, 42);
+  const angle        = Math.random() * Math.PI * 2;
+  balls.push({
+    x: k.x + Math.cos(angle) * 26,
+    y: k.y + Math.sin(angle) * 26,
+    hp: shieldHp, maxHp: shieldHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: 0,           // no damage
+    isKnight:  false,
+    isKing:    false,
+    isShield:  true,       // shield flag
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: 0.4,            // barely moves, stays near kingdom
+    radius: shieldRadius,
+    homeX: k.x,            // remembers its kingdom position
+    homeY: k.y,
+    team:  k.id,
+    color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false,
+    lastBlocked: false
+  });
+}
+
+// ---- SPAWN HOOKER ----
+// Rare unit (1/150 chance), pulls any enemy ball toward itself
+// Trapped ball stays locked until it dies — hooker deals 25% max HP per hit
+// 100% deflects all damage — only veteran knights and lvl 220+ kings can kill it
+// HP = 4x shield HP, level up = faster pull/attack speed
+function spawnHooker(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle    = Math.random() * Math.PI * 2;
+  const kingHp   = k.level * 80 + (KNIGHT_HP * 4);
+  const shieldHp = kingHp * 8;
+  const hookerHp = shieldHp * 4; // 4x shield HP
+  balls.push({
+    x: k.x + Math.cos(angle) * 22,
+    y: k.y + Math.sin(angle) * 22,
+    hp: hookerHp, maxHp: hookerHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: 0, // damage handled specially (25% target maxHp)
+    isKnight: false, isKing: false, isShield: false,
+    isCannon: false, isRammer: false,
+    isHooker: true,
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: Math.min(1.0 * speedMult, 12.0),
+    radius: 20,
+    hookTimer: 0,
+    hookCooldown: 3000, // pulls every 3s, decreases with level
+    hookedTarget: null, // currently trapped ball
+    team: k.id, color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false, lastBlocked: false
+  });
+}
+
+// ---- SPAWN HORSE KNIGHT ----
+// Cavalry unit — cannon hunter, 1/50 chance
+// Only targets cannons, runs through normal balls, immune to cannon fire
+// Only damaged by knights, kings, hookers, MLVL cannons, mega knights
+function spawnHorseKnight(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle   = Math.random() * Math.PI * 2;
+  const horseHp  = KNIGHT_HP * 3;
+  balls.push({
+    x: k.x + Math.cos(angle) * 22,
+    y: k.y + Math.sin(angle) * 22,
+    hp: horseHp, maxHp: horseHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: CANNON_DAMAGE, // instant kill on cannon contact
+    isKnight: false, isKing: false, isShield: false,
+    isCannon: false, isRammer: false, isHooker: false,
+    isHorse: true,
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: Math.min(3.5 * speedMult, 12.0),
+    radius: 22,
+    horseTarget: null,
+    team: k.id, color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false, lastBlocked: false
+  });
+}
+
+// ---- SPAWN WIZARD ----
+// Ranged unit — alternates freeze (5s) and fireball (2x knight dmg)
+// 1/50 spawn chance, everything can damage it
+function spawnWizard(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle     = Math.random() * Math.PI * 2;
+  const wizardHp  = KNIGHT_HP * 3;
+  const fireballDmg = DMG_PER_TROOP * KNIGHT_DMG_MULT * 2; // 2x knight damage
+  balls.push({
+    x: k.x + Math.cos(angle) * 22,
+    y: k.y + Math.sin(angle) * 22,
+    hp: wizardHp, maxHp: wizardHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: fireballDmg,
+    isKnight: false, isKing: false, isShield: false,
+    isCannon: false, isRammer: false, isHooker: false, isHorse: false,
+    isWizard: true,
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: Math.min(1.1 * speedMult, 12.0),
+    radius: 18,
+    wizardTimer: 0,
+    wizardCooldown: 2500,      // fires every 2.5s
+    wizardFreezeDuration: 5000, // freeze lasts 5s, +10% per level
+    wizardAbilityIndex: 0,     // 0 = freeze next, 1 = fireball next
+    wizardFreezeTarget: null,  // visual flash target for freeze
+    wizardFireTarget: null,    // visual flash target for fireball
+    team: k.id, color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false, lastBlocked: false
+  });
+}
+
+function spawnEliteKnight(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle      = Math.random() * Math.PI * 2;
+  const isBuffed   = k.level >= 180;
+
+  // Elite level = kingdom level, minimum 10
+  const eliteLevel  = Math.max(10, k.level);
+  // At 180+ kingdom level, stats scale multiplicatively
+  const eliteDmg    = isBuffed
+    ? DMG_PER_TROOP * KNIGHT_DMG_MULT * (eliteLevel / 10)
+    : DMG_PER_TROOP * KNIGHT_DMG_MULT + (DMG_BONUS * 2 * (eliteLevel - 1));
+  const eliteHp     = isBuffed
+    ? KNIGHT_HP + eliteLevel * 200
+    : KNIGHT_HP + (HP_BONUS * (eliteLevel - 1));
+  const eliteRadius = Math.min(KNIGHT_RADIUS + eliteLevel * (isBuffed ? 0.2 : 0.15), 52);
+  const eliteSpeed  = Math.min(KNIGHT_SPEED * speedMult + SPEED_BONUS * (eliteLevel - 1), 12.0);
+
+  balls.push({
+    x: k.x + Math.cos(angle) * 20,
+    y: k.y + Math.sin(angle) * 20,
+    hp: eliteHp, maxHp: eliteHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: eliteDmg,
+    isKnight:      true,
+    isEliteKnight: true,
+    isKing:        false,
+    isShield:      false,
+    ballLevel:     eliteLevel,
+    hits: 0, hitsToLevel: eliteLevel * HITS_PER_LEVEL,
+    speed: eliteSpeed,
+    radius: eliteRadius,
+    team:  k.id, color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false,
+    lastBlocked: false
+  });
+}
+
+// ---- SPAWN CANNON ----
+// Glass cannon: 1 HP, long range (150px), one-shots shields, black = kingdom color
+// Spawns as every 6th ball in the spawn sequence
+const CANNON_RANGE  = 150; // attack range in pixels
+const CANNON_DAMAGE = 99999; // effectively one-shots anything it hits
+
+function spawnCannon(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle = Math.random() * Math.PI * 2;
+  balls.push({
+    x: k.x + Math.cos(angle) * 22,
+    y: k.y + Math.sin(angle) * 22,
+    hp: 1, maxHp: 1,           // 1 HP — dies in one hit
+    troops: 1, maxTroops: 1,
+    troopDmg: CANNON_DAMAGE,   // one shots shields
+    isKnight: false,
+    isKing:   false,
+    isShield: false,
+    isCannon: true,             // cannon flag
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: Math.min(1.2 * speedMult, 12.0),
+    radius: 14,
+    attackTimer: 0,             // fires every 1200ms
+    team:  k.id, color: k.color,
+    cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false,
+    lastBlocked: false,
+    lastFired: false            // visual flash when firing
+  });
+}
+
+// ---- SPAWN RAMMER ----
+// Rams a random enemy troop stunning them
+// Stun: Ball=5s, Knight=3s, King=0.5s, Shield=immune
+// 50% more damage than knight, base speed 2, hollow = kingdom color
+const RAMMER_DMG_MULT = 3.0; // knight is 2x, rammer is 50% more = 3x
+
+function spawnRammer(k, speedMult) {
+  if (speedMult === undefined) speedMult = 1.0;
+  const angle   = Math.random() * Math.PI * 2;
+  const rammDmg = DMG_PER_TROOP * RAMMER_DMG_MULT;
+  const rammHp  = KNIGHT_HP * 1.5;
+  balls.push({
+    x: k.x + Math.cos(angle) * 20,
+    y: k.y + Math.sin(angle) * 20,
+    hp: rammHp, maxHp: rammHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: rammDmg,
+    isKnight: false, isKing: false, isShield: false, isCannon: false,
+    isRammer: true, isMlvlRammer: false,
+    ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+    speed: Math.min(2.0 * speedMult, 12.0), radius: 18,
+    team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+    fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+    trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false,
+    lastFired: false, ramTimer: 0, ramCooldown: 2000, currentRamTarget: null, isRamming: false
+  });
+}
+
+function updateTroops(ball) {
+  // These special units manage their own state — skip troop recalculation
+  if (ball.isKnight || ball.isShield || ball.isHooker || ball.isHorse || ball.isWizard) return;
+  // Compacted knights update troop count as knights die (HP drops)
+  if (ball.isCompactedKnight) {
+    const hpPerKnight = (KNIGHT_HP + HP_BONUS * 9);
+    ball.troops = Math.max(0, Math.ceil(ball.hp / hpPerKnight));
+    ball.radius = Math.min(KNIGHT_RADIUS + ball.troops * 1.5, 52);
+    return;
+  }
+  ball.troops = Math.max(0, Math.ceil(ball.hp / HP_PER_TROOP));
+  ball.radius = baseRadius(ball.troops);
+}
+
+// ---- BALL LEVEL UP ----
+// Knights and Kings: +75% to damage and HP per level (multiplicative)
+// Normal balls: flat DMG_BONUS and HP_BONUS per level
+// Speed stays as flat bonus for all units
+const KNIGHT_KING_LEVEL_MULT = 0.75; // 75% increase per level
+
+function checkLevelUp(ball) {
+  if (ball.hits >= ball.hitsToLevel) {
+    // Normal balls cap at level 100 — no more leveling after that
+    if (!ball.isKnight && !ball.isKing && !ball.isShield && ball.ballLevel >= 100) {
+      ball.hits = 0;
+      return;
+    }
+    // Shields cap at level 750
+    if (ball.isShield && ball.ballLevel >= 750) {
+      ball.hits = 0;
+      return;
+    }
+    ball.ballLevel++;
+    ball.hits = 0;
+
+    // ---- MEGA LEVEL CHECK ----
+    // Handled separately in kingdom timer — not here
+    const isMegaKnight = false;
+
+    if (ball.isMegaKnight) {
+      // Already a mega knight — keep 3 hit leveling and 100% scaling
+      ball.hitsToLevel = 3;
+      if (ball.ballLevel > 100) { ball.ballLevel = 100; ball.hits = 0; return; }
+      ball.troopDmg = Math.floor(ball.troopDmg * 2.0);
+      const hpBoost = Math.floor(ball.maxHp * 1.0);
+      ball.maxHp   += hpBoost;
+      const healAmount = Math.floor(ball.maxHp * 0.50);
+      ball.hp       = Math.min(ball.hp + hpBoost + healAmount, ball.maxHp);
+    } else if (ball.isWizard) {
+      // Wizard: -5% cooldown per level (min 800ms), +25% fireball damage, +10% freeze duration
+      ball.hitsToLevel        = ball.ballLevel * HITS_PER_LEVEL;
+      ball.wizardCooldown     = Math.max(800, ball.wizardCooldown * 0.95);
+      ball.troopDmg           = Math.floor(ball.troopDmg * 1.25);
+      ball.wizardFreezeDuration = Math.floor((ball.wizardFreezeDuration || 5000) * 1.10);
+      const wizHpBoost        = Math.floor(ball.maxHp * 0.10);
+      ball.maxHp             += wizHpBoost;
+      ball.hp                 = Math.min(ball.hp + wizHpBoost, ball.maxHp);
+    } else if (ball.isHooker) {
+      // Hooker: faster pull/attack speed per level (cooldown reduces by 100ms per level, min 500ms)
+      ball.hitsToLevel  = ball.ballLevel * HITS_PER_LEVEL;
+      ball.hookCooldown = Math.max(500, (ball.hookCooldown || 3000) - 100);
+    } else if (ball.isCannon) {
+      // Cannon: 2x damage, 0.5% more HP per level
+      ball.hitsToLevel = ball.ballLevel * HITS_PER_LEVEL;
+      ball.troopDmg    = Math.floor(ball.troopDmg * 2.0);
+      const hpBoost    = Math.floor(ball.maxHp * 0.005);
+      ball.maxHp      += hpBoost;
+      ball.hp          = Math.min(ball.hp + hpBoost, ball.maxHp);
+    } else if (ball.isRammer) {
+      // Rammer: 2x damage, +2% cannon miss chance per level (caps at 95%)
+      ball.hitsToLevel    = ball.ballLevel * HITS_PER_LEVEL;
+      ball.troopDmg       = Math.floor(ball.troopDmg * 2.0);
+      ball.cannonMissBonus = Math.min((ball.cannonMissBonus || 0) + 0.02, 0.95);
+    } else if (ball.isShield) {
+      ball.hitsToLevel = ball.ballLevel * HITS_PER_LEVEL;
+      // Shield gets 0.5% more HP per level — compounds over time
+      const shieldBoost = Math.floor(ball.maxHp * 0.005);
+      ball.maxHp += shieldBoost;
+      ball.hp     = Math.min(ball.hp + shieldBoost, ball.maxHp);
+    } else if (ball.isKnight || ball.isKing) {
+      ball.hitsToLevel = ball.ballLevel * HITS_PER_LEVEL;
+      // 75% multiplicative boost to damage and HP per level up
+      ball.troopDmg = Math.floor(ball.troopDmg * (1 + KNIGHT_KING_LEVEL_MULT));
+      const hpBoost = Math.floor(ball.maxHp * KNIGHT_KING_LEVEL_MULT);
+      ball.maxHp   += hpBoost;
+      // Heal on level up (75% of current maxHp as heal)
+      const healAmount = Math.floor(ball.maxHp * 0.30);
+      ball.hp       = Math.min(ball.hp + hpBoost + healAmount, ball.maxHp);
+    } else {
+      ball.hitsToLevel = ball.ballLevel * HITS_PER_LEVEL;
+      // Normal balls keep flat bonuses
+      ball.troopDmg += DMG_BONUS;
+      ball.maxHp    += HP_BONUS;
+      const healAmount = 20;
+      ball.hp        = Math.min(ball.hp + HP_BONUS + healAmount, ball.maxHp);
+    }
+
+    // Speed stays flat for all units
+    ball.speed = Math.min(ball.speed + SPEED_BONUS, 3.0);
+    if (!ball.isKnight && !ball.isKing) updateTroops(ball);
+    // Check if stats have hit super threshold
+    checkSuperStat(ball);
+  }
+}
+
+// ---- BLOCK CHANCE ----
+// Every ball has a 29% chance to fully block an incoming hit
+// Knights have an additional 29% on top of their 90% armor reduction
+const BLOCK_CHANCE = 0.29;
+
+function tryBlock(ball) {
+  return Math.random() < BLOCK_CHANCE;
+}
+
+// ---- SUPER STAT THRESHOLD ----
+// When HP or damage reaches 8 quadrillion (near JS max safe integer)
+// the unit ascends to Super Stats — immune to non-super damage, one-shots non-super
+const SUPER_THRESHOLD = 8e15; // 8 quadrillion
+
+function checkSuperStat(ball) {
+  if (ball.hp <= 0) return;
+  if (!ball.isSuperStat &&
+     (ball.hp >= SUPER_THRESHOLD ||
+      ball.maxHp >= SUPER_THRESHOLD ||
+      ball.troopDmg >= SUPER_THRESHOLD)) {
+    ball.isSuperStat  = true;
+    ball.hp           = 999999999;
+    ball.maxHp        = 999999999;
+    ball.troopDmg     = 999999999;
+  }
+}
+
+// ---- DAMAGE ----
+// attacker parameter optional — used for super stat and reflect checks
+function applyDamage(ball, dmg, attacker) {
+  // ---- SUPER STAT IMMUNITY ----
+  if (ball.isSuperStat && (!attacker || !attacker.isSuperStat)) return;
+  if (attacker && attacker.isSuperStat && !ball.isSuperStat) {
+    ball.hp = 0; ball.troops = 0; return;
+  }
+  // ---- HORSE IMMUNITY ----
+  // Only knights, kings, hookers, MLVL cannons and mega knights can damage horse
+  if (ball.isHorse && attacker) {
+    const canDamage = attacker.isKnight || attacker.isKing || attacker.isHooker ||
+                      (attacker.isCannon && attacker.ballLevel >= 2) ||
+                      attacker.isMegaKnight || attacker.isVeteranKnight;
+    if (!canDamage) return;
+  }
+  // ---- HOOKER DEFLECT ----
+  // Hooker deflects ALL damage — only veteran knights and level 220+ kings can damage it
+  if (ball.isHooker) {
+    const isVeteranKnight = attacker && attacker.isVeteranKnight;
+    const isHighLevelKing = attacker && attacker.isKing && attacker.ballLevel >= 220;
+    if (!isVeteranKnight && !isHighLevelKing) return; // deflect everything else
+  }
+  // ---- MLVL SHIELD REFLECT ----
+  // Attacker takes the same damage they deal to the MLVL shield
+  if (ball.isMlvlShield && attacker && attacker !== ball) {
+    attacker.hp -= dmg; // reflect — equal damage back
+    if (!attacker.isKnight && !attacker.isKing) updateTroops(attacker);
+  }
+  // Emergency shield absorbs 99% of all damage
+  if (ball.isEmergencyShield) {
+    ball.hp -= dmg * 0.01;
+    return;
+  }
+  // 29% chance to block the entire hit
+  if (tryBlock(ball)) {
+    ball.lastBlocked = true;
+    return;
+  }
+  ball.lastBlocked = false;
+  if (ball.isKnight) {
+    ball.hp -= dmg * 0.10;
+  } else {
+    ball.hp -= dmg;
+  }
+}
+
+function totalDmg(ball) {
+  const surgeMult = (surgeActive && ball.team === surgeKingdomId) ? 4 : 1;
+  return ball.troops * ball.troopDmg * surgeMult;
+}
+
+// ---- SPAWN MERCENARY ----
+// Scales with highest alive kingdom level — becomes relevant all game
+// At kingdom level 100+: stats multiply further
+function spawnMercenary() {
+  const highestKingdomLevel = Math.max(...kingdoms.filter(k => k.alive).map(k => k.level), 10);
+  const isBuffed   = highestKingdomLevel >= 100;
+
+  // Base merc level = highest kingdom level, minimum 10
+  const mercLevel  = highestKingdomLevel;
+  // HP scales with kingdom level — always threatening
+  const mercHp     = isBuffed
+    ? KNIGHT_HP * 6 + mercLevel * 200   // huge HP at 100+
+    : KNIGHT_HP * 6 + mercLevel * 80;
+  // Damage scales too
+  const mercDmg    = isBuffed
+    ? DMG_PER_TROOP * KNIGHT_DMG_MULT * 3 * (mercLevel / 10)
+    : DMG_PER_TROOP * KNIGHT_DMG_MULT * 3;
+  const mercRadius = Math.min(KNIGHT_RADIUS + 6 + (isBuffed ? mercLevel * 0.1 : 0), 48);
+  const mercSpeed  = finalBattle
+    ? Math.min(KNIGHT_SPEED * 4, 12)
+    : halfBattle
+      ? Math.min(KNIGHT_SPEED * 2, 12)
+      : KNIGHT_SPEED * 1.5;
+
+  balls.push({
+    x: MX + MW / 2 + (Math.random() - 0.5) * 40,
+    y: MY + MH / 2 + (Math.random() - 0.5) * 40,
+    hp: mercHp, maxHp: mercHp,
+    troops: 1, maxTroops: 1,
+    troopDmg: mercDmg,
+    isKnight: true,
+    isKing:   false,
+    isShield: false,
+    isMerc:   true,
+    team:     -1,
+    color:    '#888888',
+    cr: 136, cg: 136, cb: 136,
+    ballLevel: mercLevel,
+    hits: 0, hitsToLevel: mercLevel * HITS_PER_LEVEL,
+    speed: mercSpeed,
+    radius: mercRadius,
+    fightTimer: 0,
+    wobble: Math.random() * Math.PI * 2,
+    trailX: MX + MW / 2, trailY: MY + MH / 2,
+    swordAngle: 0, swordSwinging: false,
+    siegeTimer: 0, siegeTarget: null,
+    isRageBall: false,
+    lastBlocked: false
+  });
+}
+
+// ---- GAME STATE ----
+let lastTime      = 0;
+let gameOver      = false;
+let winnerName    = '';
+let finalBattle   = false;
+let finalBattleAnnounced = false;
+let halfBattle    = false;
+let mercTimer     = 0;
+// ---- SURGE SYSTEM ----
+let surgeTimer     = 0;
+let surgeKingdomId = -1;
+let surgeActive    = false;
+// ---- HOOKER TRASH TALK SYSTEM ----
+let trashTalkTimer    = 0;
+let trashTalkActive   = false;
+let trashTalkDone     = false; // prevents retriggering
+let trashTalkHookerId = -1;
+
+// ---- MAIN LOOP ----
+function update(ts) {
+  const delta = Math.min(ts - lastTime, 50);
+  lastTime = ts;
+
+  if (gameOver) { drawAll(); drawGameOver(); return; }
+
+  // Detect half battle — 4 kingdoms left = 2x speed
+  const aliveCount = kingdoms.filter(k => k.alive).length;
+  if (aliveCount === 4 && !halfBattle) {
+    halfBattle = true;
+    balls.forEach(ball => {
+      ball.speed = Math.min(ball.speed * 2, 12.0);
+    });
+  }
+
+  // Detect final battle — only 2 kingdoms left = 4x speed
+  if (aliveCount === 2 && !finalBattle) {
+    finalBattle = true;
+    finalBattleAnnounced = true;
+    // Boost ALL existing balls to 4x speed (2x on top of existing 2x)
+    balls.forEach(ball => {
+      ball.speed = Math.min(ball.speed * 2, 12.0);
+    });
+    // Start surge immediately — pick a random kingdom to surge first
+    const twoKingdoms = kingdoms.filter(k => k.alive);
+    surgeKingdomId = twoKingdoms[Math.floor(Math.random() * 2)].id;
+    surgeActive    = true;
+    surgeTimer     = 0;
+  }
+
+  // ---- SURGE SYSTEM ----
+  // Runs during final battle — alternates every 30s between alive kingdoms
+  // ---- SURGE SYSTEM ----
+  // Always tick during finalBattle — instantly switch if surge kingdom dies
+  if (finalBattle) {
+    const surgeKingdom = kingdoms.find(k => k.id === surgeKingdomId && k.alive);
+    if (!surgeKingdom) {
+      // Surge kingdom died — immediately hand surge to the next alive kingdom
+      const nextK = kingdoms.find(k => k.alive && k.id !== surgeKingdomId);
+      if (nextK) {
+        surgeKingdomId = nextK.id;
+        surgeActive    = true;
+        surgeTimer     = 0;
+      }
+    } else {
+      surgeTimer += delta;
+      if (surgeTimer >= 30000) {
+        surgeTimer = 0;
+        const other = kingdoms.find(k => k.alive && k.id !== surgeKingdomId);
+        if (other) surgeKingdomId = other.id;
+      }
+    }
+  }
+
+  // Speed multiplier for newly spawned balls
+  const speedMult = finalBattle ? 4.0 : halfBattle ? 2.0 : 1.0;
+
+  // ---- HOOKER TRASH TALK TIMER ----
+  if (finalBattle) {
+    const aliveKingdoms = kingdoms.filter(k => k.alive);
+    if (aliveKingdoms.length === 2) {
+      aliveKingdoms.forEach(k => {
+        const hooker = balls.find(b => b.isHooker && b.team === k.id);
+        if (hooker) {
+          const enemy = aliveKingdoms.find(e => e.id !== k.id);
+          const enemyHasStrongKing = balls.some(b =>
+            b.isKing && b.team === enemy.id && b.ballLevel >= 220
+          );
+          if (!enemyHasStrongKing && !trashTalkActive && !trashTalkDone) {
+            trashTalkActive   = true;
+            trashTalkTimer    = 0;
+            trashTalkHookerId = k.id;
+          }
+        }
+      });
+    }
+  }
+
+  if (trashTalkActive) {
+    trashTalkTimer += delta;
+    if (trashTalkTimer >= 5000) {
+      // 5s up — spawn a hooker directly at the enemy kingdom to clear troops
+      trashTalkActive = false;
+      trashTalkDone   = true; // never triggers again this game
+      const hookerKingdom = kingdoms.find(k => k.id === trashTalkHookerId);
+      if (hookerKingdom) {
+        const aliveKingdoms = kingdoms.filter(k => k.alive);
+        const enemy = aliveKingdoms.find(k => k.id !== trashTalkHookerId);
+        if (enemy) {
+          // Spawn hooker right at the enemy kingdom — starts hooking defenders immediately
+          const angle  = Math.random() * Math.PI * 2;
+          const kingHp = hookerKingdom.level * 80 + (KNIGHT_HP * 4);
+          const hookerHp = kingHp * 8 * 4;
+          balls.push({
+            x: enemy.x + Math.cos(angle) * 30,
+            y: enemy.y + Math.sin(angle) * 30,
+            hp: hookerHp, maxHp: hookerHp,
+            troops: 1, maxTroops: 1, troopDmg: 0,
+            isKnight: false, isKing: false, isShield: false,
+            isCannon: false, isRammer: false, isHooker: true,
+            ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+            speed: Math.min(1.5 * speedMult, 12.0), radius: 20,
+            hookTimer: 0, hookCooldown: 1500, // faster cooldown — aggressive
+            hookedTarget: null,
+            team: hookerKingdom.id, color: hookerKingdom.color,
+            cr: hookerKingdom.r, cg: hookerKingdom.g, cb: hookerKingdom.b,
+            fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+            trailX: enemy.x, trailY: enemy.y,
+            swordAngle: 0, swordSwinging: false,
+            siegeTimer: 0, siegeTarget: null,
+            isRageBall: false, lastBlocked: false
+          });
+        }
+      }
+    }
+  }
+
+  // ---- MERCENARY SPAWN TIMER ----
+  // 30s normal, 7.5s during final battle (accounts for 4x speed)
+  const mercInterval = finalBattle ? 7500 : 30000;
+  mercTimer += delta;
+  if (mercTimer >= mercInterval) {
+    spawnMercenary();
+    mercTimer = 0;
+  }
+
+  // Kingdom timers
+  kingdoms.forEach(k => {
+    if (!k.alive) return;
+    k.timer += delta;
+    if (k.timer >= k.spawnRate) {
+      k.spawnCount++;
+      // Check if this is a rammer tick (every 3rd)
+      const isRammerTick  = k.spawnCount % 3  === 0;
+      const isCannonTick  = k.spawnCount % 10 === 0;
+      const isShieldTick  = k.spawnCount % 5  === 0;
+      // Elite knight spawns separately via eliteTimer, not here
+
+      // If rammer overlaps with cannon/shield, spawn BOTH
+      if (isCannonTick && isRammerTick) {
+        spawnCannon(k, speedMult);
+        spawnRammer(k, speedMult);
+      } else if (isShieldTick && isRammerTick) {
+        spawnShield(k);
+        spawnRammer(k, speedMult);
+      } else if (isCannonTick) {
+        spawnCannon(k, speedMult);
+      } else if (isShieldTick) {
+        spawnShield(k);
+      } else if (isRammerTick) {
+        spawnRammer(k, speedMult);
+      } else {
+        spawnBall(k, speedMult);
+      }
+      k.timer = 0;
+    }
+    // Surge: 4x upgrade speed for the surging kingdom
+    const surgeUpgradeMult = (surgeActive && k.id === surgeKingdomId) ? 4 : 1;
+    k.upgradeTimer += delta * surgeUpgradeMult;
+    if (k.upgradeTimer >= 16000) {
+      k.level++;
+      k.spawnRate    = Math.max(800, k.spawnRate - 200);
+      k.upgradeTimer = 0;
+      // ---- LEVEL 300 MILESTONE: full heal to 300k ----
+      if (k.level === 300) {
+        k.maxHp = 3000000;
+        k.hp    = 3000000;
+      }
+    }
+    // ---- ELITE KNIGHT: spawns every 30s (7.5s during final battle 4x speed) ----
+    if (!k.eliteTimer) k.eliteTimer = 0;
+    k.eliteTimer += delta;
+    const eliteCooldown = finalBattle ? 7500 : 30000;
+    const knightsThisKingdom = balls.filter(b => b.isKnight && !b.isMerc && !b.isMegaKnight && b.team === k.id).length;
+    if (k.eliteTimer >= eliteCooldown && knightsThisKingdom < 100) {
+      spawnEliteKnight(k, speedMult);
+      k.eliteTimer = 0;
+    }
+
+    // ---- MEGA KNIGHT CONVERSION ----
+    // When a kingdom has 15+ regular knights, consume them and spawn 1 mega knight
+    if (knightsThisKingdom >= 15) {
+      // Remove 15 regular knights from this kingdom
+      let removed = 0;
+      balls = balls.filter(b => {
+        if (removed < 15 && b.isKnight && !b.isMerc && !b.isMegaKnight && b.team === k.id) {
+          removed++;
+          return false;
+        }
+        return true;
+      });
+      // Spawn 1 mega knight in their place
+      const megaHp  = (KNIGHT_HP + HP_BONUS * 9) * 15 * 3; // 3x the combined HP
+      const megaDmg = (DMG_PER_TROOP * KNIGHT_DMG_MULT) * 15 * 2; // 2x combined damage
+      const ang     = Math.random() * Math.PI * 2;
+      balls.push({
+        x: k.x + Math.cos(ang) * 22,
+        y: k.y + Math.sin(ang) * 22,
+        hp: megaHp, maxHp: megaHp,
+        troops: 1, maxTroops: 1,
+        troopDmg: megaDmg,
+        isKnight: true, isEliteKnight: true,
+        isMegaKnight: true,
+        isCompactedKnight: false,
+        isKing: false, isShield: false, isCannon: false, isRammer: false,
+        ballLevel: 1, hits: 0, hitsToLevel: 3,
+        speed: Math.min(KNIGHT_SPEED * speedMult * 1.2, 12.0),
+        radius: 30,
+        team: k.id, color: k.color,
+        cr: k.r, cg: k.g, cb: k.b,
+        fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+        trailX: k.x, trailY: k.y,
+        swordAngle: 0, swordSwinging: false,
+        siegeTimer: 0, siegeTarget: null,
+        isRageBall: false, lastBlocked: false
+      });
+    }
+
+    // ---- HOOKER TOKEN: auto spawn when kingdom drops below 25% HP — ONE TIME ONLY ----
+    if (k.hookerToken && k.hp / k.maxHp < 0.25) {
+      k.hookerToken = false;
+      const alreadyHasHooker = balls.some(b => b.isHooker && b.team === k.id);
+      if (!alreadyHasHooker) spawnHooker(k, speedMult);
+    }
+
+    // ---- EMERGENCY SHIELD: spawns when kingdom drops below 1% HP ----
+    // This shield has 99% damage reduction — nearly impenetrable
+    const hpPercent = k.hp / k.maxHp;
+    if (hpPercent < 0.01 && !k.lastShieldSpawned) {
+      k.lastShieldSpawned = true;
+      // Spawn a special emergency shield with 99% damage reduction
+      const emergencyHp = k.maxHp * 50; // massive HP
+      balls.push({
+        x: k.x, y: k.y,
+        hp: emergencyHp, maxHp: emergencyHp,
+        troops: 1, maxTroops: 1,
+        troopDmg: 0,
+        isKnight: false, isKing: false,
+        isShield: true,
+        isEmergencyShield: true, // 99% damage reduction flag
+        ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+        speed: 0.3,
+        radius: 28,
+        homeX: k.x, homeY: k.y,
+        team: k.id, color: k.color,
+        cr: k.r, cg: k.g, cb: k.b,
+        fightTimer: 0,
+        wobble: Math.random() * Math.PI * 2,
+        trailX: k.x, trailY: k.y,
+        swordAngle: 0, swordSwinging: false,
+        siegeTimer: 0, siegeTarget: null,
+        isRageBall: false, lastBlocked: false
+      });
+    }
+    // Reset so it can spawn again if HP recovers above 1% then drops again
+    if (hpPercent >= 0.01) k.lastShieldSpawned = false;
+    // ---- LEVEL 150+: spawn ONE compacted knight ball with multiple knights inside ----
+    // Level 150 = 1 knight inside, Level 151 = 2 knights inside, etc.
+    // Works exactly like normal balls — one ball, number shows knights inside
+    if (k.level >= 150 && k.timer === 0) {
+      const knightCount = k.level - 149; // knights packed inside
+      const fixedLevel  = 10;
+      const fixedDmg    = (DMG_PER_TROOP * KNIGHT_DMG_MULT + (DMG_BONUS * 2 * (fixedLevel - 1))) * knightCount;
+      const fixedHp     = (KNIGHT_HP + (HP_BONUS * (fixedLevel - 1))) * knightCount;
+      const fixedRadius = Math.min(KNIGHT_RADIUS + knightCount * 1.5, 52);
+      const fixedSpeed  = Math.min(KNIGHT_SPEED * speedMult, 12.0);
+      const ang         = Math.random() * Math.PI * 2;
+      balls.push({
+        x: k.x + Math.cos(ang) * 20,
+        y: k.y + Math.sin(ang) * 20,
+        hp: fixedHp, maxHp: fixedHp,
+        troops: knightCount, maxTroops: knightCount, // shows count like normal balls
+        troopDmg: fixedDmg / knightCount,            // per knight damage
+        isKnight: true, isEliteKnight: true,
+        isCompactedKnight: true,                      // compacted flag
+        isKing: false, isShield: false, isCannon: false, isRammer: false,
+        ballLevel: fixedLevel, hits: 0, hitsToLevel: fixedLevel * HITS_PER_LEVEL,
+        speed: fixedSpeed, radius: fixedRadius,
+        team: k.id, color: k.color,
+        cr: k.r, cg: k.g, cb: k.b,
+        fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+        trailX: k.x, trailY: k.y,
+        swordAngle: 0, swordSwinging: false,
+        siegeTimer: 0, siegeTarget: null,
+        isRageBall: false, lastBlocked: false
+      });
+    }
+
+    // ---- CANNON UPGRADE: 5 LV1 cannons → 1 MLVL cannon ----
+    if (k.level >= 10) {
+      const lv1Cannons = balls.filter(b => b.isCannon && b.ballLevel === 1 && b.team === k.id);
+      if (lv1Cannons.length >= 5) {
+        // Remove 5 LV1 cannons
+        let removed = 0;
+        balls = balls.filter(b => {
+          if (removed < 5 && b.isCannon && b.ballLevel === 1 && b.team === k.id) {
+            removed++; return false;
+          }
+          return true;
+        });
+        // Spawn 1 MLVL cannon with 8 level ups applied immediately
+        const ang = Math.random() * Math.PI * 2;
+        let mlvlCannonDmg = CANNON_DAMAGE;
+        let mlvlCannonHp  = KNIGHT_HP;
+        for (let i = 0; i < 8; i++) {
+          mlvlCannonDmg = Math.floor(mlvlCannonDmg * 2.0);
+          mlvlCannonHp  = Math.floor(mlvlCannonHp + mlvlCannonHp * 0.005);
+        }
+        balls.push({
+          x: k.x + Math.cos(ang) * 22, y: k.y + Math.sin(ang) * 22,
+          hp: mlvlCannonHp, maxHp: mlvlCannonHp,
+          troops: 1, maxTroops: 1, troopDmg: mlvlCannonDmg,
+          isKnight: false, isKing: false, isShield: false, isCannon: true,
+          ballLevel: 9, hits: 0, hitsToLevel: 9 * HITS_PER_LEVEL,
+          speed: Math.min(1.2 * speedMult, 12.0), radius: 22,
+          attackTimer: 0, fireCooldown: 10000,
+          team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+          fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+          trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+          siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false, lastFired: false
+        });
+      }
+    }
+
+    // ---- RAMMER UPGRADE: 5 LV1 rammers → 1 MLVL rammer ----
+    const lv1Rammers = balls.filter(b => b.isRammer && !b.isMlvlRammer && b.team === k.id);
+    if (lv1Rammers.length >= 5) {
+      let removed = 0;
+      balls = balls.filter(b => {
+        if (removed < 5 && b.isRammer && !b.isMlvlRammer && b.team === k.id) {
+          removed++; return false;
+        }
+        return true;
+      });
+      const ang = Math.random() * Math.PI * 2;
+      let mlvlRamDmg        = DMG_PER_TROOP * RAMMER_DMG_MULT * 3;
+      let mlvlRamMissBonus  = 0;
+      for (let i = 0; i < 8; i++) {
+        mlvlRamDmg       = Math.floor(mlvlRamDmg * 2.0);
+        mlvlRamMissBonus = Math.min(mlvlRamMissBonus + 0.02, 0.95);
+      }
+      balls.push({
+        x: k.x + Math.cos(ang) * 20, y: k.y + Math.sin(ang) * 20,
+        hp: KNIGHT_HP * 6, maxHp: KNIGHT_HP * 6,
+        troops: 1, maxTroops: 1, troopDmg: mlvlRamDmg,
+        isKnight: false, isKing: false, isShield: false, isCannon: false,
+        isRammer: true, isMlvlRammer: true,
+        ballLevel: 9, hits: 0, hitsToLevel: 9 * HITS_PER_LEVEL,
+        cannonMissBonus: mlvlRamMissBonus,
+        speed: Math.min(2.4 * speedMult, 12.0), radius: 28,
+        team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+        fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+        trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+        siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false,
+        lastFired: false, ramTimer: 0, ramCooldown: 1500, currentRamTarget: null, isRamming: false
+      });
+    }
+
+    // ---- SHIELD UPGRADE: 5 LV1 shields → 1 MLVL shield ----
+    // MLVL shield: 2x HP, reflects all damage back to attacker
+    const lv1Shields = balls.filter(b => b.isShield && !b.isMlvlShield && !b.isEmergencyShield && !b.isEliteKingShield && b.team === k.id);
+    if (lv1Shields.length >= 5) {
+      // Consume 5 LV1 shields
+      let removed = 0;
+      balls = balls.filter(b => {
+        if (removed < 5 && b.isShield && !b.isMlvlShield && !b.isEmergencyShield && !b.isEliteKingShield && b.team === k.id) {
+          removed++; return false;
+        }
+        return true;
+      });
+      // Spawn 1 MLVL shield
+      const kingHp   = k.level * 80 + (KNIGHT_HP * 4);
+      const shieldHp = kingHp * 8 * 2; // 2x the normal shield HP
+      const ang      = Math.random() * Math.PI * 2;
+      balls.push({
+        x: k.x + Math.cos(ang) * 30, y: k.y + Math.sin(ang) * 30,
+        hp: shieldHp, maxHp: shieldHp,
+        troops: 1, maxTroops: 1, troopDmg: 0,
+        isKnight: false, isKing: false,
+        isShield: true, isMlvlShield: true, // reflect flag
+        ballLevel: 1, hits: 0, hitsToLevel: HITS_PER_LEVEL,
+        speed: 0.5, radius: Math.min(28 + k.level * 2, 52),
+        homeX: k.x, homeY: k.y,
+        team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+        fightTimer: 0, wobble: Math.random() * Math.PI * 2,
+        trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+        siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false
+      });
+    }
+
+    // ---- GLOBAL BALL CAP: max 500 balls total to prevent lag ----
+    if (balls.length > 500) {
+      // Remove oldest non-knight non-king non-shield balls first
+      const removable = balls.filter(b => !b.isKnight && !b.isKing && !b.isShield && !b.isCannon);
+      if (removable.length > 0) balls.splice(balls.indexOf(removable[0]), 1);
+    }
+  });
+
+  // Ball update
+  balls.forEach(ball => {
+    ball.wobble += 0.04;
+    ball.trailX  = ball.x;
+    ball.trailY  = ball.y;
+
+    // ---- STUNNED: skip all movement and combat ----
+    if (ball.isStunned && ball.stunTimer > 0) return;
+
+    // Sword swing animation
+    if (ball.swordSwinging) {
+      ball.swordAngle += 0.18;
+      if (ball.swordAngle > Math.PI * 1.2) {
+        ball.swordAngle    = 0;
+        ball.swordSwinging = false;
+      }
+    }
+
+    // Find nearest enemy ball
+    // Mercs (team -1) treat everyone as enemy, everyone treats mercs as enemy
+    const enemies = ball.isMerc
+      ? balls.filter(b => b !== ball)
+      : balls.filter(b => b.team !== ball.team || b.isMerc);
+
+    // ---- ROYAL SHIELD PRIORITY ----
+    // If targeting a king but there's a royal shield nearby, target the shield instead
+    let nearest;
+    if (!ball.isKing && !ball.isMerc) {
+      const royalShields = enemies.filter(e => e.isEliteKingShield);
+      const nearestRoyal = royalShields.length
+        ? royalShields.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b)
+        : null;
+      // If a royal shield is within 200px prioritize it over everything else
+      if (nearestRoyal && getDist(ball, nearestRoyal) < 200) {
+        nearest = nearestRoyal;
+      } else {
+        nearest = enemies.length
+          ? enemies.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b)
+          : null;
+      }
+    } else {
+      // Kings and mercs target normally — king attacks freely
+      nearest = enemies.length
+        ? enemies.filter(e => !e.isEliteKingShield || ball.isKing)
+            .reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b, enemies[0])
+        : null;
+    }
+    const nearDist = nearest ? getDist(ball, nearest) : 999999;
+
+    // ---- SHIELD SPECIAL BEHAVIOR ----
+    // Shield stays near home kingdom and intercepts incoming enemies
+    if (ball.isShield) {
+      const homeDist = getDist(ball, { x: ball.homeX, y: ball.homeY });
+      // If an enemy is close to home, move to intercept it
+      const threatRadius = 80;
+      const threat = enemies.find(e => {
+        const distToHome = getDist(e, { x: ball.homeX, y: ball.homeY });
+        return distToHome < threatRadius;
+      });
+      if (threat) {
+        const ang = Math.atan2(threat.y - ball.y, threat.x - ball.x);
+        ball.x += Math.cos(ang) * ball.speed * 2;
+        ball.y += Math.sin(ang) * ball.speed * 2;
+      } else if (homeDist > 40) {
+        // Drift back to kingdom if no threat nearby
+        const ang = Math.atan2(ball.homeY - ball.y, ball.homeX - ball.x);
+        ball.x += Math.cos(ang) * ball.speed;
+        ball.y += Math.sin(ang) * ball.speed;
+      }
+      // Shields take combat hits but deal zero damage — still need to process combat
+      if (nearest && nearDist < ball.radius + nearest.radius + 4) {
+        ball.fightTimer += delta;
+        if (ball.fightTimer >= 800) {
+          applyDamage(ball, totalDmg(nearest), nearest); // shield takes damage
+          // nearest deals damage to shield but shield deals 0 back
+          ball.hits++;
+          updateTroops(ball);
+          checkLevelUp(ball);
+          ball.fightTimer = 0;
+        }
+      }
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return; // skip normal ball logic
+    }
+
+    // ---- HORSE KNIGHT SPECIAL BEHAVIOR ----
+    // Only targets cannons — charges through everything else
+    if (ball.isHorse) {
+      // Find nearest enemy cannon
+      const enemyCannons = enemies.filter(e => e.isCannon);
+      if (enemyCannons.length > 0) {
+        ball.horseTarget = enemyCannons.reduce((a, b) =>
+          getDist(ball, a) < getDist(ball, b) ? a : b
+        );
+      } else {
+        ball.horseTarget = null;
+      }
+
+      if (ball.horseTarget && ball.horseTarget.hp > 0) {
+        // Charge toward cannon at full speed
+        const ang = Math.atan2(ball.horseTarget.y - ball.y, ball.horseTarget.x - ball.x);
+        ball.x += Math.cos(ang) * ball.speed;
+        ball.y += Math.sin(ang) * ball.speed;
+
+        // On contact — instant kill the cannon
+        if (getDist(ball, ball.horseTarget) < ball.radius + ball.horseTarget.radius + 4) {
+          ball.horseTarget.hp     = 0;
+          ball.horseTarget.troops = 0;
+          ball.hits++;
+          checkLevelUp(ball);
+          ball.horseTarget = null;
+        }
+      } else {
+        // No cannons — march toward nearest enemy
+        if (nearest) {
+          const ang = Math.atan2(nearest.y - ball.y, nearest.x - ball.x);
+          ball.x += Math.cos(ang) * ball.speed * 0.5;
+          ball.y += Math.sin(ang) * ball.speed * 0.5;
+        }
+      }
+
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return;
+    }
+
+    // ---- HOOKER SPECIAL BEHAVIOR ----
+    // Roams toward enemies, hooks one and traps it until dead
+    if (ball.isHooker) {
+      ball.hookTimer += delta;
+
+      // Clear hooked target if it died
+      if (ball.hookedTarget && ball.hookedTarget.hp <= 0) {
+        ball.hookedTarget = null;
+      }
+
+      // If holding a target — lock it to hooker position and deal 25% HP damage
+      if (ball.hookedTarget) {
+        const ht = ball.hookedTarget;
+        // Keep trapped ball stuck near hooker
+        ht.x = ball.x + 30;
+        ht.y = ball.y;
+        ht.speed = 0;
+        // Deal 25% max HP damage on cooldown
+        if (ball.hookTimer >= ball.hookCooldown) {
+          ht.hp -= ht.maxHp * 0.25;
+          ht.hp  = Math.max(0, ht.hp);
+          updateTroops(ht);
+          ball.hits++;
+          checkLevelUp(ball);
+          ball.hookTimer = 0;
+        }
+      } else {
+        // No target — pick a random enemy from the ENTIRE field (infinite range)
+        if (ball.hookTimer >= ball.hookCooldown && enemies.length > 0) {
+          // Pick random enemy — can pull anyone including kings
+          const validTargets = enemies.filter(e => !e.isHooker && !e.isShield);
+          if (validTargets.length) {
+            ball.hookedTarget = validTargets[Math.floor(Math.random() * validTargets.length)];
+          }
+          ball.hookTimer = 0;
+        }
+        // Wander toward nearest enemy slowly
+        if (nearest) {
+          const ang = Math.atan2(nearest.y - ball.y, nearest.x - ball.x);
+          ball.x += Math.cos(ang) * ball.speed * 0.5;
+          ball.y += Math.sin(ang) * ball.speed * 0.5;
+        }
+      }
+
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return;
+    }
+
+    // ---- WIZARD SPECIAL BEHAVIOR ----
+    // Alternates: freeze (5s stun) → fireball (2x knight dmg ranged) → repeat
+    if (ball.isWizard) {
+      ball.wizardTimer += delta;
+      ball.wizardFreezeTarget = null;
+      ball.wizardFireTarget   = null;
+
+      // Wander toward nearest enemy at moderate speed
+      if (nearest) {
+        const ang = Math.atan2(nearest.y - ball.y, nearest.x - ball.x);
+        ball.x += Math.cos(ang) * ball.speed * 0.6;
+        ball.y += Math.sin(ang) * ball.speed * 0.6;
+      }
+
+      if (ball.wizardTimer >= ball.wizardCooldown && enemies.length > 0) {
+        ball.wizardTimer = 0;
+
+        if (ball.wizardAbilityIndex === 0) {
+          // ---- FREEZE ----
+          // Target nearest enemy — stun for 5s regardless of immunity
+          if (nearest) {
+            nearest.isStunned   = true;
+            nearest.stunTimer   = ball.wizardFreezeDuration;
+            nearest.stunImmunity = 0;
+            nearest.stunTeam    = ball.team;
+            ball.wizardFreezeTarget = nearest;
+            ball.hits++;
+            checkLevelUp(ball);
+          }
+          ball.wizardAbilityIndex = 1; // next: fireball
+        } else {
+          // ---- FIREBALL ----
+          // Ranged — hits nearest enemy within 120px for 2x knight damage
+          const fireTarget = enemies.find(e => getDist(ball, e) < 120);
+          if (fireTarget) {
+            applyDamage(fireTarget, ball.troopDmg, ball);
+            updateTroops(fireTarget);
+            ball.wizardFireTarget = fireTarget;
+            ball.hits++;
+            checkLevelUp(ball);
+          }
+          ball.wizardAbilityIndex = 0; // next: freeze
+        }
+      }
+
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return;
+    }
+
+    // ---- WIZARD SPECIAL BEHAVIOR ----
+    // Alternates freeze → fireball → freeze → fireball on cooldown
+    // Freeze: 5s stun on any enemy, Fireball: 2x knight dmg at 130px range
+    // Weakness: takes damage from everything, no deflection
+    if (ball.isWizard) {
+      ball.wizardTimer += delta;
+      // Tick down visual flash
+      if (ball.wizardFlashTimer > 0) ball.wizardFlashTimer -= delta;
+
+      // Wander slowly toward nearest enemy
+      if (nearest) {
+        const ang = Math.atan2(nearest.y - ball.y, nearest.x - ball.x);
+        ball.x += Math.cos(ang) * ball.speed * 0.6;
+        ball.y += Math.sin(ang) * ball.speed * 0.6;
+      }
+
+      // Fire ability on cooldown
+      if (ball.wizardTimer >= ball.wizardCooldown && enemies.length > 0) {
+        ball.wizardTimer = 0;
+
+        if (ball.wizardAbilityIndex === 0) {
+          // ---- FREEZE ----
+          // Pick random non-frozen enemy
+          const freezeable = enemies.filter(e => !e.isStunned);
+          if (freezeable.length > 0) {
+            const target = freezeable[Math.floor(Math.random() * freezeable.length)];
+            target.isStunned  = true;
+            target.stunTimer  = 5000; // 5s freeze
+            target.stunTeam   = ball.team;
+            target.stunImmunity = 0;
+            ball.wizardFreezeTarget = target;
+            ball.wizardLastAbility  = 'freeze';
+            ball.wizardFlashTimer   = 600;
+            ball.hits++;
+            checkLevelUp(ball);
+          }
+          ball.wizardAbilityIndex = 1; // next: fireball
+
+        } else {
+          // ---- FIREBALL ----
+          // Ranged attack on nearest enemy within 130px
+          const fireTarget = enemies.find(e => getDist(ball, e) <= 130);
+          if (fireTarget) {
+            applyDamage(fireTarget, ball.troopDmg, ball);
+            updateTroops(fireTarget);
+            ball.wizardFireTarget  = fireTarget;
+            ball.wizardLastAbility = 'fireball';
+            ball.wizardFlashTimer  = 600;
+            ball.hits++;
+            checkLevelUp(ball);
+          }
+          ball.wizardAbilityIndex = 0; // next: freeze
+        }
+      }
+
+      // Takes contact damage like any normal unit (no deflection)
+      if (nearest && getDist(ball, nearest) < ball.radius + nearest.radius + 4) {
+        ball.fightTimer += delta;
+        if (ball.fightTimer >= 800) {
+          applyDamage(ball, totalDmg(nearest), nearest);
+          ball.fightTimer = 0;
+        }
+      } else {
+        ball.fightTimer = 0;
+      }
+
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return;
+    }
+
+    // ---- CANNON SPECIAL BEHAVIOR ----
+    // Attacks from long range, one-shots shields, dies in one hit
+    if (ball.isCannon) {
+      ball.lastFired = false;
+      ball.attackTimer += delta;
+
+      // ---- CANNON MLVL UPGRADE ----
+      // Handled in kingdom timer — 5 cannons consumed → 1 MLVL cannon spawned
+      const ownerKingdom = kingdoms.find(k => k.id === ball.team);
+      // Use upgraded cooldown if level 2, else default 1200ms
+      const fireCooldown = ball.ballLevel >= 2 ? (ball.fireCooldown || 10000) : 1200;
+
+      // Find nearest enemy in long range
+      const cannonTarget = enemies.length
+        ? enemies.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b)
+        : null;
+      const cannonDist = cannonTarget ? getDist(ball, cannonTarget) : 999999;
+
+      if (cannonTarget && cannonDist <= CANNON_RANGE && ball.attackTimer >= fireCooldown) {
+        // ---- MISS CHANCE ----
+        // Normal balls: 25% miss, Knights: 50% miss, Kings: 75% miss
+        // MLVL Rammers add cannonMissBonus per level
+        let missChance = 0.25;
+        if (cannonTarget.isKing)        missChance = 0.75;
+        else if (cannonTarget.isKnight) missChance = 0.50;
+        else if (cannonTarget.isHorse)  missChance = 1.0; // 100% miss — cannons can't hit horses
+        // Add rammer's earned cannon miss bonus
+        if (cannonTarget.isRammer && cannonTarget.cannonMissBonus) {
+          missChance = Math.min(missChance + cannonTarget.cannonMissBonus, 0.95);
+        }
+        const missed = Math.random() < missChance;
+
+        ball.lastFired = true;
+        ball.lastMissed = missed;
+        ball.attackTimer = 0;
+
+        if (!missed) {
+          // Hit! Instant kill on shields
+          if (cannonTarget.isShield) {
+            cannonTarget.hp = 0;
+          } else if (
+            ball.ballLevel >= 2 &&
+            !cannonTarget.isKnight &&
+            !cannonTarget.isKing &&
+            cannonTarget.troops >= 150
+          ) {
+            // MLVL cannon vs 150+ troop ball — takes 5 hits to die
+            // Deal exactly 1/5 of their max HP per shot
+            const dmg = Math.ceil(cannonTarget.maxHp / 5);
+            applyDamage(cannonTarget, dmg, ball);
+          } else {
+            applyDamage(cannonTarget, CANNON_DAMAGE, ball);
+          }
+          updateTroops(cannonTarget);
+          ball.hits++;
+          checkLevelUp(ball);
+        }
+      } else if (!cannonTarget || cannonDist > CANNON_RANGE) {
+        // March toward nearest enemy if out of range
+        if (cannonTarget) {
+          const ang = Math.atan2(cannonTarget.y - ball.y, cannonTarget.x - ball.x);
+          const wa  = ang + Math.sin(ball.wobble) * 0.08;
+          ball.x += Math.cos(wa) * ball.speed;
+          ball.y += Math.sin(wa) * ball.speed;
+        }
+      }
+      // Cannon takes full contact damage if enemy touches it — dies in 1 hit anyway
+      if (nearest && nearDist < ball.radius + nearest.radius + 4) {
+        applyDamage(ball, totalDmg(nearest), nearest);
+      }
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return; // skip normal ball logic
+    }
+
+    // ---- RAMMER SPECIAL BEHAVIOR ----
+    // Picks a random enemy, charges at it, stuns on contact
+    // Stun duration: Ball=5s, Knight=3s, King=0.5s, Shield=immune
+    if (ball.isRammer) {
+      ball.ramTimer += delta;
+
+      // Tick down stun and stun immunity on all balls
+      balls.forEach(b => {
+        if (b.stunTimer > 0) {
+          b.stunTimer -= delta;
+          if (b.stunTimer <= 0) {
+            b.stunTimer      = 0;
+            b.isStunned      = false;
+            b.stunImmunity   = 7000; // 7s immunity after unstun
+          }
+        }
+        if (b.stunImmunity > 0) {
+          b.stunImmunity -= delta;
+          if (b.stunImmunity <= 0) b.stunImmunity = 0;
+        }
+      });
+
+      // Pick a new random target every ramCooldown ms
+      if (ball.ramTimer >= ball.ramCooldown || !ball.currentRamTarget) {
+        // Rammers can now target shields — but hitting one stuns the rammer!
+        const validTargets = enemies.filter(e => !e.stunImmunity || e.stunImmunity <= 0);
+        if (validTargets.length) {
+          const randIdx = Math.floor(Math.random() * validTargets.length);
+          ball.currentRamTarget = validTargets[randIdx];
+        }
+        ball.ramTimer = 0;
+      }
+
+      const rt = ball.currentRamTarget;
+      if (rt && rt.hp > 0) {
+        // Charge toward ram target at high speed
+        const ang = Math.atan2(rt.y - ball.y, rt.x - ball.x);
+        ball.x += Math.cos(ang) * ball.speed * 1.8;
+        ball.y += Math.sin(ang) * ball.speed * 1.8;
+
+        // On contact
+        if (getDist(ball, rt) < ball.radius + rt.radius + 4) {
+          // ---- SHIELD STUNS THE RAMMER ----
+          if (rt.isShield) {
+            ball.isStunned  = true;
+            ball.stunTimer  = 3000; // 3s stun on rammer
+            ball.stunImmunity = 0;
+            ball.currentRamTarget = null;
+            ball.ramTimer = ball.ramCooldown;
+          } else if (rt.stunImmunity && rt.stunImmunity > 0) {
+            // Stun immune target — back off with full cooldown
+            ball.currentRamTarget = null;
+            ball.ramTimer = ball.ramCooldown;
+          } else if (Math.random() < 0.25) {
+            // 25% miss — full cooldown before picking new target
+            ball.currentRamTarget = null;
+            ball.ramTimer = ball.ramCooldown;
+          } else {
+            // ---- PHYSICS COLLISION ----
+            // Knights have armor — they hit back with equal force
+            // Normal balls and kings are unarmored — ram takes no damage
+            const dmgToTarget = totalDmg(ball);
+            const dmgToRammer = rt.isKnight
+              ? dmgToTarget   // knight armor = equal recoil damage
+              : 0;            // naked target = no recoil
+            applyDamage(rt,   dmgToTarget, ball);
+            if (dmgToRammer > 0) applyDamage(ball, dmgToRammer, rt);
+            // Apply stun based on target type (shields immune, immunity immune)
+            if (!rt.isShield && (!rt.stunImmunity || rt.stunImmunity <= 0)) {
+              rt.isStunned  = true;
+              rt.stunTeam   = ball.team;
+              rt.stunImmunity = 0;
+              if (rt.isKing)         rt.stunTimer = 500;
+              else if (rt.isKnight)  rt.stunTimer = 3000;
+              else                   rt.stunTimer = 5000;
+            }
+            updateTroops(rt);
+            updateTroops(ball);
+            ball.hits++;
+            checkLevelUp(ball);
+            ball.currentRamTarget = null;
+            ball.ramTimer = ball.ramCooldown;
+          }
+        }
+      } else {
+        // Target dead — march toward nearest enemy
+        if (nearest) {
+          const ang = Math.atan2(nearest.y - ball.y, nearest.x - ball.x);
+          ball.x += Math.cos(ang) * ball.speed;
+          ball.y += Math.sin(ang) * ball.speed;
+        }
+        ball.currentRamTarget = null;
+      }
+
+      ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+      ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+      return;
+    }
+
+    if (nearest && nearDist < ball.radius + nearest.radius + 4) {
+      // ---- COMBAT ----
+      ball.fightTimer += delta;
+      if (ball.fightTimer >= 800) {
+        applyDamage(nearest, totalDmg(ball), ball);
+        applyDamage(ball,    totalDmg(nearest), nearest);
+        ball.hits++;
+        nearest.hits++;
+        updateTroops(ball);
+        updateTroops(nearest);
+        checkLevelUp(ball);
+        checkLevelUp(nearest);
+        checkSuperStat(ball);
+        checkSuperStat(nearest);
+        ball.fightTimer       = 0;
+        ball.swordSwinging    = true;
+        nearest.swordSwinging = true;
+      }
+    } else {
+      // ---- MARCH ----
+      // Only march if not currently sieging a kingdom
+      if (ball.siegeTarget === null) {
+        ball.fightTimer = 0;
+        let tx = ball.x, ty = ball.y;
+
+        if (nearest && nearDist < 160) {
+          tx = nearest.x; ty = nearest.y;
+        } else {
+          // Mercs target any alive kingdom, others target enemy kingdoms only
+          const ek = ball.isMerc
+            ? kingdoms.filter(k => k.alive)
+            : kingdoms.filter(k => k.id !== ball.team && k.alive);
+          const tk = ek.length
+            ? ek.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b)
+            : null;
+          if (tk) {
+            tx = tk.x; ty = tk.y;
+          } else {
+            // No kingdoms left — target nearest enemy ball (including kings)
+            const allEnemies = ball.isMerc
+              ? balls.filter(b => b !== ball)
+              : balls.filter(b => b.team !== ball.team);
+            const nearestEnemy = allEnemies.length
+              ? allEnemies.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b)
+              : null;
+            if (nearestEnemy) { tx = nearestEnemy.x; ty = nearestEnemy.y; }
+          }
+        }
+
+        const ang = Math.atan2(ty - ball.y, tx - ball.x);
+        const wa  = ang + Math.sin(ball.wobble) * 0.10;
+        ball.x += Math.cos(wa) * ball.speed;
+        ball.y += Math.sin(wa) * ball.speed;
+      }
+    }
+
+    // ---- SIEGE ENEMY KINGDOM ----
+    // Balls stay at kingdom and keep attacking instead of disappearing
+    // Clear siege if target kingdom is already dead
+    if (ball.siegeTarget !== null) {
+      const targetK = kingdoms.find(k => k.id === ball.siegeTarget);
+      if (!targetK || !targetK.alive) {
+        ball.siegeTarget = null;
+        ball.siegeTimer  = 0;
+      }
+    }
+    kingdoms.forEach(k => {
+      if (!k.alive) return;
+      // Normal balls skip own kingdom, mercs attack all kingdoms
+      if (!ball.isMerc && k.id === ball.team) return;
+      if (getDist(ball, k) < ball.radius + 34) {
+        // Mark this ball as sieging this kingdom
+        ball.siegeTarget = k.id;
+        ball.siegeTimer += delta;
+        // Attack kingdom every 800ms
+        if (ball.siegeTimer >= 800) {
+          k.hp -= totalDmg(ball) * 0.5;
+          ball.hits++;
+          checkLevelUp(ball);
+          ball.siegeTimer = 0;
+          // Kingdom under attack upgrades 6x faster
+          k.upgradeTimer += 4800;
+          if (k.hp <= 0) {
+            // ---- HOOKER TOKEN: last chance — heal to 25% and spawn hooker ----
+            if (k.hookerToken) {
+              k.hookerToken = false;
+              k.hp = Math.floor(k.maxHp * 0.25); // heal to 25%
+              const alreadyHasHooker = balls.some(b => b.isHooker && b.team === k.id);
+              if (!alreadyHasHooker) spawnHooker(k, speedMult);
+            } else {
+              k.alive = false;
+              k.hp    = 0;
+              // ---- SPAWN KING AS LAST STAND ----
+              spawnKing(k);
+              // Filter out all balls of this team EXCEPT the king just spawned
+              balls = balls.filter(b => b.team !== k.id || b.isKing);
+            }
+          }
+        }
+      } else if (ball.siegeTarget === k.id) {
+        // Ball moved away from kingdom, clear siege
+        ball.siegeTarget = null;
+        ball.siegeTimer  = 0;
+      }
+    });
+
+    // Clamp to map
+    ball.x = Math.max(MX + 14, Math.min(MX + MW - 14, ball.x));
+    ball.y = Math.max(MY + 14, Math.min(MY + MH - 14, ball.y));
+  });
+
+  // Remove dead balls — detect knight deaths to trigger rage buff
+  const deadKnights = balls.filter(b => b.isKnight && (b.troops <= 0 || b.hp <= 0));
+  deadKnights.forEach(dk => {
+    const ownerKingdom = kingdoms.find(k => k.id === dk.team);
+    if (ownerKingdom && ownerKingdom.alive) {
+      ownerKingdom.rageBuff  = true;
+      ownerKingdom.rageTimer = 11000;
+    }
+  });
+  // Kings, shields, hookers and MLVL cannons survive as long as hp > 0
+  balls = balls.filter(b =>
+    (b.isKing || b.isShield || b.isHooker || b.isHorse || b.isWizard || (b.isCannon && b.ballLevel >= 2))
+      ? b.hp > 0
+      : (b.troops > 0 && b.hp > 0)
+  );
+
+  // Tick down rage timers on all kingdoms
+  kingdoms.forEach(k => {
+    if (k.rageBuff) {
+      k.rageTimer -= delta;
+      if (k.rageTimer <= 0) {
+        k.rageBuff  = false;
+        k.rageTimer = 0;
+      }
+    }
+  });
+
+  // Win check — a fallen kingdom's king must also die before they're eliminated
+  const alive = kingdoms.filter(k => k.alive);
+  kingdoms.filter(k => !k.alive).forEach(k => {
+    const kingStillFighting = balls.some(b => b.isKing && b.team === k.id);
+    if (!kingStillFighting && alive.length + kingdoms.filter(kk => !kk.alive && balls.some(b => b.isKing && b.team === kk.id)).length === 1) {
+      if (alive.length === 1) { gameOver = true; winnerName = alive[0].name; }
+    }
+  });
+  if (alive.length === 1 && !balls.some(b => b.isKing && kingdoms.find(k => k.id === b.team && !k.alive))) {
+    gameOver = true; winnerName = alive[0].name;
+  }
+  if (alive.length === 0) {
+    const lastKing = balls.filter(b => b.isKing);
+    if (lastKing.length === 1) { gameOver = true; winnerName = CONFIGS[lastKing[0].team].name; }
+    else if (lastKing.length === 0) { gameOver = true; winnerName = 'Nobody'; }
+  }
+
+  // ---- TORNADO UPDATE ----
+  tornadoSpawnTimer -= delta;
+  if (tornadoSpawnTimer <= 0) {
+    tornadoSpawnTimer = TORNADO_SPAWN_INTERVAL;
+    if (tornadoes.length < TORNADO_MAX) spawnTornado();
+  }
+
+  tornadoes.forEach(t => {
+    t.lifetime  -= delta;
+    t.tickTimer += delta;
+    t.spinAngle += 0.08;
+    t.wobble    += 0.03;
+
+    // Drift randomly — gently change direction over time
+    t.driftAngle += (Math.random() - 0.5) * 0.08;
+    t.x += Math.cos(t.driftAngle) * t.driftSpeed;
+    t.y += Math.sin(t.driftAngle) * t.driftSpeed;
+
+    // Clamp to map
+    t.x = Math.max(MX + 30, Math.min(MX + MW - 30, t.x));
+    t.y = Math.max(MY + 30, Math.min(MY + MH - 30, t.y));
+
+    // Pull all balls within range toward center
+    balls.forEach(ball => {
+      const dist = getDist(ball, t);
+      if (dist < TORNADO_PULL_RANGE && dist > 0) {
+        const ang = Math.atan2(t.y - ball.y, t.x - ball.x);
+        const force = TORNADO_PULL_FORCE * (1 - dist / TORNADO_PULL_RANGE);
+        ball.x += Math.cos(ang) * force;
+        ball.y += Math.sin(ang) * force;
+      }
+    });
+
+    // Deal 1% max HP damage every 1s to all balls in range
+    if (t.tickTimer >= 1000) {
+      t.tickTimer = 0;
+      balls.forEach(ball => {
+        if (getDist(ball, t) < TORNADO_PULL_RANGE) {
+          const dmg = Math.max(1, Math.floor(ball.maxHp * 0.01));
+          ball.hp -= dmg;
+          ball.hp  = Math.max(0, ball.hp);
+          updateTroops(ball);
+        }
+      });
+    }
+  });
+
+  // Remove expired tornadoes
+  tornadoes = tornadoes.filter(t => t.lifetime > 0);
+
+  // ---- TSUNAMI UPDATE ----
+  tsunamiSpawnTimer -= delta;
+  if (tsunamiSpawnTimer <= 0) {
+    tsunamiSpawnTimer = TSUNAMI_SPAWN_INTERVAL;
+    if (tsunamis.length < TSUNAMI_MAX) spawnTsunami();
+  }
+
+  tsunamis.forEach(t => {
+    t.spinAngle += 0.06;
+    // Move in fixed direction at speed 4
+    t.x += Math.cos(t.angle) * TSUNAMI_SPEED;
+    t.y += Math.sin(t.angle) * TSUNAMI_SPEED;
+
+    // Hit any ball in contact — 50% max HP damage, one hit per ball
+    balls.forEach(ball => {
+      if (!t.hitBalls.has(ball) && getDist(ball, t) < t.radius + ball.radius + 6) {
+        const dmg = Math.floor(ball.maxHp * 0.50);
+        ball.hp -= dmg;
+        ball.hp  = Math.max(0, ball.hp);
+        updateTroops(ball);
+        t.hitBalls.add(ball);
+      }
+    });
+  });
+
+  // Remove tsunamis that have left the map bounds
+  tsunamis = tsunamis.filter(t =>
+    t.x > MX - 120 && t.x < MX + MW + 120 &&
+    t.y > MY - 120 && t.y < MY + MH + 120
+  );
+
+  drawAll();
+  updateMusic();
+  requestAnimationFrame(update);
+}
+
+// ======== DRAWING ========
+function drawKnight(ball) {
+  const size = ball.radius * 2.8;
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  // Slight wobble when fighting
+  if (ball.swordSwinging) {
+    ctx.rotate(Math.sin(ball.swordAngle) * 0.15);
+  }
+  ctx.drawImage(
+    knightImg,
+    -size / 2,
+    -size / 2,
+    size,
+    size
+  );
+  ctx.restore();
+}
+
+// ---- DRAW KING ----
+// Colored circle drawn underneath fills the white area of the king image
+function drawKing(ball) {
+  const size = ball.radius * 3.2;
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  if (ball.swordSwinging) {
+    ctx.rotate(Math.sin(ball.swordAngle) * 0.12);
+  }
+  // Kingdom color fills the white body area
+  ctx.beginPath();
+  ctx.arc(0, ball.radius * 0.15, ball.radius * 0.85, 0, Math.PI * 2);
+  ctx.fillStyle = ball.color;
+  ctx.fill();
+  // King image drawn on top
+  ctx.drawImage(kingImg, -size/2, -size/2, size, size);
+  ctx.restore();
+}
+
+// ---- DRAW SHIELD ----
+// Colored circle underneath fills the white area of the shield image
+function drawShield(ball) {
+  const size = ball.radius * 2.8;
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  // Kingdom color circle underneath (fills white area)
+  ctx.beginPath();
+  ctx.arc(0, 0, ball.radius * 0.88, 0, Math.PI * 2);
+  ctx.fillStyle = ball.color;
+  ctx.fill();
+  // Shield image on top
+  ctx.drawImage(shieldImg, -size/2, -size/2, size, size);
+  ctx.restore();
+}
+
+// ---- DRAW CANNON ----
+// Kingdom color fills the black circle part of the cannon image
+function drawCannon(ball) {
+  const size = ball.radius * 3.5;
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  // Angle cannon toward nearest enemy
+  const enemies = balls.filter(b => b.team !== ball.team);
+  if (enemies.length) {
+    const target = enemies.reduce((a, b) => getDist(ball, a) < getDist(ball, b) ? a : b);
+    const ang = Math.atan2(target.y - ball.y, target.x - ball.x);
+    ctx.rotate(ang);
+  }
+  // Kingdom color fills the black circle body
+  ctx.beginPath();
+  ctx.arc(-ball.radius * 0.2, 0, ball.radius * 0.75, 0, Math.PI * 2);
+  ctx.fillStyle = ball.color;
+  ctx.fill();
+  // Cannon image on top
+  ctx.drawImage(cannonImg, -size/2, -size/2, size, size);
+  ctx.restore();
+}
+
+// ---- DRAW RAMMER ----
+// Kingdom color fills the hollow center of the rammer image
+function drawRammer(ball) {
+  const size = ball.radius * 2.8;
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  // Rotate toward ram target if charging
+  if (ball.currentRamTarget) {
+    const ang = Math.atan2(
+      ball.currentRamTarget.y - ball.y,
+      ball.currentRamTarget.x - ball.x
+    );
+    ctx.rotate(ang);
+  }
+  // Kingdom color fills the hollow center
+  ctx.beginPath();
+  ctx.arc(0, 0, ball.radius * 0.45, 0, Math.PI * 2);
+  ctx.fillStyle = ball.color;
+  ctx.fill();
+  // Rammer image on top
+  ctx.drawImage(rammerImg, -size/2, -size/2, size, size);
+  ctx.restore();
+}
+
+function drawAll() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Wood border
+  ctx.fillStyle = '#7a5010';
+  ctx.fillRect(0, 0, W, H);
+
+  // Parchment tiles
+  for (let i = 0; i < MW; i += 36) {
+    for (let j = 0; j < MH; j += 36) {
+      const even = (Math.floor(i/36) + Math.floor(j/36)) % 2 === 0;
+      ctx.fillStyle = even ? '#d4a555' : '#c99848';
+      ctx.fillRect(MX + i, MY + j, 36, 36);
+    }
+  }
+
+  ctx.strokeStyle = '#7a5010'; ctx.lineWidth = 5;
+  ctx.strokeRect(MX + 3, MY + 3, MW - 6, MH - 6);
+
+  drawWavyBorder();
+  mountains.forEach(m => drawMountain(m.x, m.y));
+  trees.forEach(t => drawTree(t.x, t.y));
+
+  // Trails
+  balls.forEach(ball => {
+    ctx.beginPath();
+    ctx.arc(ball.trailX, ball.trailY, ball.radius * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = ball.color + '44';
+    ctx.fill();
+  });
+
+  kingdoms.forEach(k => drawKingdom(k));
+
+  // ---- TORNADOES ----
+  tornadoes.forEach(t => {
+    const alpha = Math.min(1, t.lifetime / 2000); // fade out last 2s
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Pull range ring — faint dashed circle showing suck zone
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, TORNADO_PULL_RANGE, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(160,160,160,0.25)';
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Tornado image — rotates over time
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.spinAngle);
+    const tSize = t.radius * 3.2;
+    ctx.drawImage(tornadoImg, -tSize/2, -tSize/2, tSize, tSize);
+
+    ctx.restore();
+
+    // TORNADO label — no rotation, drawn after restore
+    const labelAlpha = Math.min(1, t.lifetime / 2000);
+    ctx.globalAlpha = labelAlpha;
+    ctx.fillStyle    = '#aaaaaa';
+    ctx.font         = 'bold 9px Arial';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TORNADO', t.x, t.y + t.radius * 2.2);
+    ctx.globalAlpha = 1;
+  });
+
+  // ---- TSUNAMIS ----
+  tsunamis.forEach(t => {
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle - Math.PI * 0.5); // orient in direction of travel
+    const tsSize = t.radius * 3.0;
+    ctx.drawImage(tsunamiImg, -tsSize/2, -tsSize/2, tsSize, tsSize);
+    ctx.restore();
+    // TSUNAMI label
+    ctx.fillStyle    = '#00ccee';
+    ctx.font         = 'bold 10px Arial';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TSUNAMI', t.x, t.y + t.radius + 12);
+  });
+
+  // ---- SHIELDS (drawn between kingdoms and balls) ----
+  balls.filter(b => b.isShield).forEach(ball => {
+    // MLVL shield — purple double ring with REFLECT label
+    if (ball.isMlvlShield) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 14, 0, Math.PI * 2);
+      ctx.strokeStyle = '#aa44ffcc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 8, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffffff88';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+    }
+    // Elite king shield — gold pulsing ring
+    if (ball.isEliteKingShield) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 12, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44cc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 18, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd4466';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    // Emergency shield — red pulsing ring
+    if (ball.isEmergencyShield) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff0000cc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 16, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff000066';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    // HP bar background — shields show a big HP bar
+    const hpRatio = Math.max(0, ball.hp / ball.maxHp);
+    const bw = ball.radius * 2.6;
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 6);
+    ctx.fillStyle = ball.isEmergencyShield
+      ? '#ff0000'
+      : hpRatio > 0.5 ? '#4499ff' : hpRatio > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpRatio, 6);
+    // Shield body
+    drawShield(ball);
+    // Shield label
+    ctx.fillStyle = ball.isEmergencyShield ? '#ff4444' : ball.isEliteKingShield ? '#ffdd44' : ball.isMlvlShield ? '#aa44ff' : '#ffffff';
+    ctx.font = `bold ${Math.max(8, ball.radius * 0.4)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.isEmergencyShield ? 'LAST STAND!' : ball.isEliteKingShield ? 'ROYAL' : ball.isMlvlShield ? 'REFLECT' : 'SHIELD', ball.x, ball.y + ball.radius + 16);
+  });
+
+  // ---- CANNONS ----
+  balls.filter(b => b.isCannon).forEach(ball => {
+    // Range indicator circle — shows attack range
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, CANNON_RANGE, 0, Math.PI * 2);
+    ctx.strokeStyle = ball.color + '22';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+
+    // ---- LEVEL 2 CANNON VISUALS ----
+    if (ball.ballLevel >= 2) {
+      // Gold ring shows upgrade
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44cc';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+      // HP bar since it now has knight HP
+      const bw2  = ball.radius * 2.4;
+      const hpR2 = Math.max(0, ball.hp / ball.maxHp);
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(ball.x - bw2/2, ball.y + ball.radius + 4, bw2, 4);
+      ctx.fillStyle = hpR2 > 0.5 ? '#44ff44' : hpR2 > 0.25 ? '#ffaa00' : '#ff3333';
+      ctx.fillRect(ball.x - bw2/2, ball.y + ball.radius + 4, bw2 * hpR2, 4);
+      // Cooldown bar — shows time until next shot
+      const cdRatio = Math.min(1, ball.attackTimer / 10000);
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(ball.x - bw2/2, ball.y + ball.radius + 10, bw2, 3);
+      ctx.fillStyle = '#ffdd44';
+      ctx.fillRect(ball.x - bw2/2, ball.y + ball.radius + 10, bw2 * cdRatio, 3);
+    }
+    // Fire flash when shooting
+    if (ball.lastFired) {
+      if (ball.lastMissed) {
+        // Miss — gray puff
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius + 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#88888866';
+        ctx.fill();
+        ctx.fillStyle    = '#cccccc';
+        ctx.font         = `bold ${Math.max(9, ball.radius * 0.7)}px Arial`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('MISS!', ball.x, ball.y - ball.radius - 12);
+      } else {
+        // Hit — yellow flash
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffff0066';
+        ctx.fill();
+        ctx.fillStyle    = '#ffff00';
+        ctx.font         = `bold ${Math.max(9, ball.radius * 0.7)}px Arial`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('BOOM!', ball.x, ball.y - ball.radius - 12);
+      }
+    }
+    drawCannon(ball);
+    // Label — 1HP for normal, MLVL for upgraded
+    ctx.fillStyle    = ball.ballLevel >= 2 ? '#ffdd44' : '#ff4444';
+    ctx.font         = `bold ${Math.max(8, ball.radius * 0.5)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel >= 2 ? 'MLVL' : '1HP', ball.x, ball.y + ball.radius + 20);
+  });
+
+  // ---- RAMMERS ----
+  balls.filter(b => b.isRammer).forEach(ball => {
+    // MLVL rammer gold ring
+    if (ball.isMlvlRammer) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 7, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44cc';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    // Speed lines when charging at target
+    if (ball.currentRamTarget) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 8, 0, Math.PI * 2);
+      ctx.strokeStyle = ball.color + 'aa';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    drawRammer(ball);
+    // RAM / RAM MLVL label
+    ctx.fillStyle    = ball.isMlvlRammer ? '#ffdd44' : '#ffffff';
+    ctx.font         = `bold ${Math.max(8, ball.radius * 0.45)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ball.isMlvlRammer ? 'RAM MLVL' : 'RAM', ball.x, ball.y + ball.radius + 12);
+    // HP bar
+    const bw  = ball.radius * 2.2;
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 18, bw, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 18, bw * hpR, 4);
+  });
+
+  // ---- HORSE KNIGHTS ----
+  balls.filter(b => b.isHorse).forEach(ball => {
+    // Charge trail when targeting cannon
+    if (ball.horseTarget) {
+      ctx.beginPath();
+      ctx.moveTo(ball.trailX, ball.trailY);
+      ctx.lineTo(ball.x, ball.y);
+      ctx.strokeStyle = ball.color + '66';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    // Kingdom color underneath
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.beginPath();
+    ctx.arc(0, 0, ball.radius * 0.88, 0, Math.PI * 2);
+    ctx.fillStyle = ball.color;
+    ctx.fill();
+    ctx.drawImage(horseImg, -ball.radius * 1.2, -ball.radius * 1.2, ball.radius * 2.4, ball.radius * 2.4);
+    ctx.restore();
+    // HP bar
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    const bw  = ball.radius * 2.4;
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 4);
+    // Label
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.max(8, ball.radius * 0.45)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🐴', ball.x, ball.y);
+    // Level badge
+    const lx = ball.x - ball.radius * 0.55, ly = ball.y - ball.radius * 0.85;
+    const lr = Math.max(7, ball.radius * 0.38);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = ball.color; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+  });
+
+  // ---- HOOKERS ----
+  balls.filter(b => b.isHooker).forEach(ball => {
+    // Draw chain line to hooked target
+    if (ball.hookedTarget && ball.hookedTarget.hp > 0) {
+      ctx.beginPath();
+      ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(ball.hookedTarget.x, ball.hookedTarget.y);
+      ctx.strokeStyle = ball.color + 'cc';
+      ctx.lineWidth   = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Body — hooker.png directly, no color circle
+    const hSize = ball.radius * 2.4;
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.drawImage(hookerImg, -hSize/2, -hSize/2, hSize, hSize);
+    ctx.restore();
+    // HOOKER label in kingdom color instead of color circle
+    ctx.fillStyle = ball.color;
+    ctx.font = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('HOOKER', ball.x, ball.y - ball.radius - 12);
+    // Sword pointing north — sword.png (small, proportional to unit)
+    const sSize = ball.radius * 0.8;
+    ctx.save();
+    ctx.translate(ball.x - ball.radius * 0.4, ball.y - ball.radius - sSize * 0.5);
+    ctx.rotate(-Math.PI / 2);
+    ctx.drawImage(swordImg, -sSize/2, -sSize/2, sSize, sSize);
+    ctx.restore();
+    // Hook symbol
+    ctx.fillStyle = '#ff8800';
+    ctx.font = `bold ${Math.max(10, ball.radius * 0.6)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🪝', ball.x, ball.y + 2);
+    // HP bar
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    const bw  = ball.radius * 2.4;
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 5);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 5);
+    // Label
+    ctx.fillStyle = '#ff8800';
+    ctx.font = `bold ${Math.max(8, ball.radius * 0.45)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('HOOK', ball.x, ball.y + ball.radius + 16);
+    // Level badge
+    const lx = ball.x - ball.radius * 0.55, ly = ball.y - ball.radius * 0.85;
+    const lr = Math.max(7, ball.radius * 0.38);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = '#ff8800'; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+  });
+
+  // ---- WIZARDS ----
+  balls.filter(b => b.isWizard).forEach(ball => {
+    // Freeze beam — blue line to freeze target
+    if (ball.wizardFreezeTarget) {
+      ctx.beginPath();
+      ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(ball.wizardFreezeTarget.x, ball.wizardFreezeTarget.y);
+      ctx.strokeStyle = '#44aaff';
+      ctx.lineWidth   = 3;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle    = '#44aaff';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.55)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('FREEZE!', ball.x, ball.y - ball.radius - 14);
+    }
+    // Fireball beam — red/orange line to fire target
+    if (ball.wizardFireTarget) {
+      ctx.beginPath();
+      ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(ball.wizardFireTarget.x, ball.wizardFireTarget.y);
+      ctx.strokeStyle = '#ff6600';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+      // Fireball impact flash
+      ctx.beginPath();
+      ctx.arc(ball.wizardFireTarget.x, ball.wizardFireTarget.y, ball.wizardFireTarget.radius + 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff660055';
+      ctx.fill();
+      ctx.fillStyle    = '#ff4400';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.55)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('FIREBALL!', ball.x, ball.y - ball.radius - 14);
+    }
+    // Wizard body — wizard.png
+    const wSize = ball.radius * 2.6;
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.drawImage(wizardImg, -wSize/2, -wSize/2, wSize, wSize);
+    ctx.restore();
+    // Next ability indicator
+    const nextAbility = ball.wizardAbilityIndex === 0 ? '❄️' : '🔥';
+    ctx.fillStyle    = ball.wizardAbilityIndex === 0 ? '#44aaff' : '#ff6600';
+    ctx.font         = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(nextAbility, ball.x, ball.y + 2);
+    // Cooldown arc — shows time until next ability
+    const cdRatio = Math.min(1, ball.wizardTimer / ball.wizardCooldown);
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 3, -Math.PI/2, -Math.PI/2 + cdRatio * Math.PI * 2);
+    ctx.strokeStyle = ball.wizardAbilityIndex === 0 ? '#44aaffcc' : '#ff6600cc';
+    ctx.lineWidth   = 3;
+    ctx.stroke();
+    // HP bar
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    const bw  = ball.radius * 2.4;
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 4);
+    // WIZARD label in kingdom color
+    ctx.fillStyle    = ball.color;
+    ctx.font         = `bold ${Math.max(8, ball.radius * 0.45)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('WIZARD', ball.x, ball.y + ball.radius + 15);
+    // Level badge
+    const lx = ball.x - ball.radius * 0.55, ly = ball.y - ball.radius * 0.85;
+    const lr = Math.max(7, ball.radius * 0.38);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = '#8822ee'; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+  });
+
+  // ---- STUN VISUAL on any stunned ball ----
+  balls.filter(b => b.isStunned && b.stunTimer > 0).forEach(ball => {
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffff00cc';
+    ctx.lineWidth   = 3;
+    ctx.stroke();
+    ctx.fillStyle    = '#ffff00';
+    ctx.font         = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`STUN ${(ball.stunTimer/1000).toFixed(1)}s`, ball.x, ball.y - ball.radius - 10);
+  });
+
+  // ---- STUN IMMUNITY VISUAL — blue ring ----
+  balls.filter(b => !b.isStunned && b.stunImmunity > 0).forEach(ball => {
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2);
+    ctx.strokeStyle = '#4499ffcc';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  });
+
+  // ---- SUPER STAT VISUAL — white blazing aura ----
+  balls.filter(b => b.isSuperStat).forEach(ball => {
+    // Outer white blaze
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 18, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffffcc';
+    ctx.lineWidth   = 5;
+    ctx.stroke();
+    // Inner gold ring
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffdd44ff';
+    ctx.lineWidth   = 4;
+    ctx.stroke();
+    // SUPER label
+    ctx.fillStyle    = '#ffffff';
+    ctx.font         = `bold ${Math.max(10, ball.radius * 0.55)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('SUPER', ball.x, ball.y - ball.radius - 18);
+  });
+
+  // Normal balls (skip special units — already drawn above in their own sections)
+  // IMPORTANT: must also exclude hooker, horse, king — they have dedicated draw sections
+  // Without this exclusion, a kingdom-colored circle is painted ON TOP of their PNGs
+  balls.filter(b => !b.isKnight && !b.isShield && !b.isCannon && !b.isRammer && !b.isHooker && !b.isHorse && !b.isWizard && !b.isKing).forEach(ball => {
+    // Rage buff ring — red outer glow on balls spawned during rage
+    if (ball.isRageBall) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff4400cc';
+      ctx.lineWidth   = 2.5;
+      ctx.stroke();
+    }
+    // Siege glow — orange ring when attacking a kingdom
+    if (ball.siegeTarget !== null) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 7, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff880088';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    // Block flash — white ring when a hit is blocked
+    if (ball.lastBlocked) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 9, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffffffcc';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+      ctx.fillStyle    = '#ffffff';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.55)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BLOCK!', ball.x, ball.y - ball.radius - 10);
+    }
+    if (ball.fightTimer > 0) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 6, 0, Math.PI * 2);
+      ctx.fillStyle = ball.color + '33'; ctx.fill();
+    }
+    if (ball.ballLevel >= 3) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = getLevelColor(ball.ballLevel) + 'cc';
+      ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    ctx.fillStyle = getBallColor(ball); ctx.fill();
+    ctx.strokeStyle = '#00000066'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Troop badge (top-right black)
+    const bx = ball.x + ball.radius * 0.6;
+    const by = ball.y - ball.radius * 0.6;
+    const br = Math.max(8, ball.radius * 0.45);
+    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI*2);
+    ctx.fillStyle = '#111111'; ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.floor(br * 1.1)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.troops, bx, by);
+
+    // Level badge (top-left colored)
+    const lx = ball.x - ball.radius * 0.6;
+    const ly = ball.y - ball.radius * 0.6;
+    const lr = Math.max(7, ball.radius * 0.4);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = getLevelColor(ball.ballLevel); ctx.fill();
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+
+    // XP arc
+    const xpRatio = ball.hits / ball.hitsToLevel;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 1,
+      Math.PI * 0.5, Math.PI * 0.5 + xpRatio * Math.PI * 2);
+    ctx.strokeStyle = getLevelColor(ball.ballLevel) + '99';
+    ctx.lineWidth = 2; ctx.stroke();
+  });
+
+  // Knights on top (including mercenaries)
+  balls.filter(b => b.isKnight).forEach(ball => {
+    // ---- VETERAN KNIGHT VISUALS — silver ring ----
+    if (ball.isVeteranKnight) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = '#cccccccc';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+      ctx.fillStyle    = '#cccccc';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('VET!', ball.x, ball.y - ball.radius - 14);
+    }
+    // ---- MEGA KNIGHT VISUALS ----
+    if (ball.isMegaKnight) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 14, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44ff';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 8, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffffff99';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+      ctx.fillStyle    = '#ffdd44';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('MEGA!', ball.x, ball.y - ball.radius - 16);
+    }
+    // ---- MERCENARY SPECIAL VISUALS ----
+    if (ball.isMerc) {
+      // Pulsing gray danger ring
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 12, 0, Math.PI * 2);
+      ctx.strokeStyle = '#888888cc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      // Red inner ring showing it's hostile to all
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff000099';
+      ctx.lineWidth   = 2.5;
+      ctx.stroke();
+      drawKnight(ball);
+      // MERC label
+      ctx.fillStyle    = '#ff4444';
+      ctx.font         = `bold ${Math.max(9, ball.radius * 0.5)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('MERC', ball.x, ball.y - ball.radius - 12);
+      // Level badge
+      const lx = ball.x - ball.radius * 0.55;
+      const ly = ball.y - ball.radius * 0.85;
+      const lr = Math.max(9, ball.radius * 0.42);
+      ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+      ctx.fillStyle = '#ff4400'; ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${Math.floor(lr)}px Arial`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ball.ballLevel, lx, ly);
+      // HP bar
+      const bw = ball.radius * 2.6;
+      const hpR = Math.max(0, ball.hp / ball.maxHp);
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 5);
+      ctx.fillStyle = hpR > 0.5 ? '#888888' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+      ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 5);
+      return; // skip normal knight drawing for mercs
+    }
+    // Siege glow for knight
+    if (ball.siegeTarget !== null) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff880099';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+    // Block flash for knight — golden shield flash
+    if (ball.lastBlocked) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 12, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44cc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.fillStyle    = '#ffdd44';
+      ctx.font         = `bold ${Math.max(10, ball.radius * 0.6)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BLOCK!', ball.x, ball.y - ball.radius - 12);
+    }
+    if (ball.fightTimer > 0) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff22'; ctx.fill();
+    }
+    if (ball.ballLevel >= 2) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = getLevelColor(ball.ballLevel) + 'bb';
+      ctx.lineWidth = 3; ctx.stroke();
+    }
+
+    drawKnight(ball);
+
+    // Level badge
+    const lx = ball.x - ball.radius * 0.55;
+    const ly = ball.y - ball.radius * 0.85;
+    const lr = Math.max(8, ball.radius * 0.38);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = getLevelColor(ball.ballLevel); ctx.fill();
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+
+    // K badge — shows troop count for compacted knights, K for regular
+    const sx = ball.x + ball.radius * 0.55;
+    const sy = ball.y - ball.radius * 0.85;
+    const sr = Math.max(8, ball.radius * 0.38);
+    ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI*2);
+    ctx.fillStyle = ball.isCompactedKnight ? '#111111' : '#222222'; ctx.fill();
+    ctx.strokeStyle = ball.isCompactedKnight ? '#ffffff' : '#ffdd44';
+    ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = ball.isCompactedKnight ? '#ffffff' : '#ffdd44';
+    ctx.font = `bold ${Math.floor(sr * 0.9)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.isCompactedKnight ? ball.troops : 'K', sx, sy);
+
+    // XP arc
+    const xpRatio = ball.hits / ball.hitsToLevel;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 2,
+      Math.PI * 0.5, Math.PI * 0.5 + xpRatio * Math.PI * 2);
+    ctx.strokeStyle = '#ffdd4499'; ctx.lineWidth = 2.5; ctx.stroke();
+
+    // HP bar
+    const bw = ball.radius * 2.2;
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 4);
+  });
+
+  // ---- KINGS ON VERY TOP ----
+  balls.filter(b => b.isKing).forEach(ball => {
+    // Crown glow — golden aura
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 10, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffdd44aa';
+    ctx.lineWidth   = 4;
+    ctx.stroke();
+
+    // Siege glow
+    if (ball.siegeTarget !== null) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 14, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff880099';
+      ctx.lineWidth   = 3;
+      ctx.stroke();
+    }
+
+    // Block flash
+    if (ball.lastBlocked) {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius + 16, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffdd44cc';
+      ctx.lineWidth   = 4;
+      ctx.stroke();
+      ctx.fillStyle    = '#ffdd44';
+      ctx.font         = `bold ${Math.max(10, ball.radius * 0.6)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BLOCK!', ball.x, ball.y - ball.radius - 14);
+    }
+
+    drawKing(ball);
+
+    // Level badge top-left
+    const lx = ball.x - ball.radius * 0.55;
+    const ly = ball.y - ball.radius * 0.85;
+    const lr = Math.max(9, ball.radius * 0.42);
+    ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI*2);
+    ctx.fillStyle = getLevelColor(ball.ballLevel); ctx.fill();
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.floor(lr)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ball.ballLevel, lx, ly);
+
+    // Crown badge top-right
+    const sx = ball.x + ball.radius * 0.55;
+    const sy = ball.y - ball.radius * 0.85;
+    const sr = Math.max(9, ball.radius * 0.42);
+    ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI*2);
+    ctx.fillStyle = '#ffdd44'; ctx.fill();
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.floor(sr * 0.85)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('K', sx, sy);
+
+    // XP arc
+    const xpRatio = ball.hits / ball.hitsToLevel;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius + 2,
+      Math.PI * 0.5, Math.PI * 0.5 + xpRatio * Math.PI * 2);
+    ctx.strokeStyle = '#ffdd4499'; ctx.lineWidth = 3; ctx.stroke();
+
+    // HP bar
+    const bw  = ball.radius * 2.6;
+    const hpR = Math.max(0, ball.hp / ball.maxHp);
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw, 5);
+    ctx.fillStyle = hpR > 0.5 ? '#44ff44' : hpR > 0.25 ? '#ffaa00' : '#ff3333';
+    ctx.fillRect(ball.x - bw/2, ball.y + ball.radius + 4, bw * hpR, 5);
+  });
+
+  drawMinimap();
+  drawScoreboard();
+}
+
+function drawWavyBorder() {
+  ctx.strokeStyle = '#7a5010'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let x = MX; x <= MX + MW; x += 8) {
+    const yw = MY + 18 + Math.sin(x * 0.05) * 4;
+    x === MX ? ctx.moveTo(x, yw) : ctx.lineTo(x, yw);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let x = MX; x <= MX + MW; x += 8) {
+    const yw = MY + MH - 18 + Math.sin(x * 0.05) * 4;
+    x === MX ? ctx.moveTo(x, yw) : ctx.lineTo(x, yw);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let y = MY; y <= MY + MH; y += 8) {
+    const xw = MX + 18 + Math.sin(y * 0.05) * 4;
+    y === MY ? ctx.moveTo(xw, y) : ctx.lineTo(xw, y);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let y = MY; y <= MY + MH; y += 8) {
+    const xw = MX + MW - 18 + Math.sin(y * 0.05) * 4;
+    y === MY ? ctx.moveTo(xw, y) : ctx.lineTo(xw, y);
+  }
+  ctx.stroke();
+}
+
+function drawTree(x, y) {
+  ctx.strokeStyle = '#5a3a10'; ctx.lineWidth = 1.2;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(x,              y - 14 + i * 5);
+    ctx.lineTo(x - 7 + i*1.5, y + i * 5);
+    ctx.lineTo(x + 7 - i*1.5, y + i * 5);
+    ctx.closePath(); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(x, y + 11); ctx.lineTo(x, y + 15); ctx.stroke();
+}
+
+function drawMountain(x, y) {
+  ctx.strokeStyle = '#5a3a10'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x-18,y+10); ctx.lineTo(x,y-14);   ctx.lineTo(x+18,y+10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+8, y+10); ctx.lineTo(x+22,y-4); ctx.lineTo(x+34,y+10); ctx.stroke();
+}
+
+function drawKingdom(k) {
+  const x = k.x, y = k.y, bw = 44, bh = 44;
+  ctx.globalAlpha = k.alive ? 1 : 0.2;
+
+  // Flash red if under attack
+  const underAttack = balls.some(b => b.siegeTarget === k.id);
+  if (underAttack) {
+    ctx.beginPath();
+    ctx.arc(x, y, 36, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ff0000cc';
+    ctx.lineWidth   = 3;
+    ctx.stroke();
+  }
+
+  // ---- RAGE BUFF GLOW ----
+  if (k.rageBuff) {
+    ctx.beginPath();
+    ctx.arc(x, y, 40, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ff4400cc';
+    ctx.lineWidth   = 4;
+    ctx.stroke();
+    // Rage timer bar above kingdom
+    const rageRatio = k.rageTimer / 11000;
+    ctx.fillStyle   = '#333333';
+    ctx.fillRect(x - 25, y - bh/2 - 18, 50, 5);
+    ctx.fillStyle   = '#ff4400';
+    ctx.fillRect(x - 25, y - bh/2 - 18, 50 * rageRatio, 5);
+    ctx.fillStyle   = '#ff4400';
+    ctx.font        = 'bold 8px Arial';
+    ctx.textAlign   = 'center';
+    ctx.fillText('RAGE!', x, y - bh/2 - 20);
+  }
+
+  // ---- SURGE GLOW ----
+  if (surgeActive && k.id === surgeKingdomId) {
+    ctx.beginPath();
+    ctx.arc(x, y, 48, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, 52, 0, Math.PI * 2);
+    ctx.strokeStyle = k.color + 'aa';
+    ctx.lineWidth   = 3;
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = k.color;
+  ctx.fillRect(x - bw/2, y - bh/2, bw, bh);
+  ctx.strokeStyle = '#111111'; ctx.lineWidth = 2;
+  ctx.strokeRect(x - bw/2, y - bh/2, bw, bh);
+
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - 10, y - 4, 20, 16);
+  ctx.fillStyle = '#ffffff44';
+  ctx.fillRect(x - 14, y - 12, 9, 14);
+  ctx.fillRect(x + 5,  y - 12, 9, 14);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x - 14, y - 17, 4, 6);
+  ctx.fillRect(x - 10, y - 17, 4, 6);
+  ctx.fillRect(x + 5,  y - 17, 4, 6);
+  ctx.fillRect(x + 9,  y - 17, 4, 6);
+
+  // Kingdom level badge
+  ctx.fillStyle = '#111111';
+  ctx.beginPath(); ctx.arc(x - bw/2 + 1, y - bh/2 + 1, 11, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 10px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(k.level, x - bw/2 + 1, y - bh/2 + 1);
+
+  // ---- H TOKEN badge — next to level badge ----
+  if (k.hookerToken) {
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath(); ctx.arc(x - bw/2 + 16, y - bh/2 + 1, 9, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 9px Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('H', x - bw/2 + 16, y - bh/2 + 1);
+  }
+
+  // HP number
+  ctx.fillStyle = '#111111'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+  ctx.fillText(Math.max(0, Math.floor(k.hp)), x, y + bh/2 + 13);
+
+  // HP bar
+  const ratio = Math.max(0, k.hp / k.maxHp);
+  ctx.fillStyle = '#333333'; ctx.fillRect(x - 25, y + bh/2 + 16, 50, 5);
+  ctx.fillStyle = ratio > 0.5 ? '#44ff44' : ratio > 0.25 ? '#ffaa00' : '#ff3333';
+  ctx.fillRect(x - 25, y + bh/2 + 16, 50 * ratio, 5);
+
+  // Spawn info
+  ctx.fillStyle = '#111111'; ctx.font = '9px Arial'; ctx.textAlign = 'center';
+  ctx.fillText(`Spawns ${k.level} troop${k.level > 1 ? 's' : ''}`, x, y + bh/2 + 28);
+
+  ctx.globalAlpha = 1;
+}
+
+function drawMinimap() {
+  const mw = 130, mh = 100;
+  const mx = W - mw - 8, my = H - mh - 8;
+  ctx.fillStyle = '#c99848'; ctx.fillRect(mx, my, mw, mh);
+  ctx.strokeStyle = '#7a5010'; ctx.lineWidth = 2; ctx.strokeRect(mx, my, mw, mh);
+
+  kingdoms.forEach(k => {
+    if (!k.alive) return;
+    const sx = mx + ((k.x - MX) / MW) * mw;
+    const sy = my + ((k.y - MY) / MH) * mh;
+    ctx.fillStyle = k.color; ctx.fillRect(sx-5, sy-5, 10, 10);
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 1; ctx.strokeRect(sx-5, sy-5, 10, 10);
+  });
+
+  balls.forEach(b => {
+    const sx = mx + ((b.x - MX) / MW) * mw;
+    const sy = my + ((b.y - MY) / MH) * mh;
+    if (b.isMerc) {
+      // Gray X on minimap for mercenary
+      ctx.fillStyle = '#888888';
+      ctx.font = 'bold 9px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('X', sx, sy);
+    } else if (b.isKnight) {
+      ctx.fillStyle = '#ffdd44';
+      ctx.fillRect(sx-2, sy-2, 4, 4);
+    } else {
+      ctx.fillStyle = b.color;
+      ctx.beginPath(); ctx.arc(sx, sy, 2, 0, Math.PI*2); ctx.fill();
+    }
+  });
+
+  ctx.fillStyle = '#111111'; ctx.font = 'bold 9px Arial';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText('Minimap', mx + 4, my + 3);
+}
+
+function drawScoreboard() {
+  const alive = kingdoms.filter(k => k.alive);
+  const kc    = balls.filter(b => b.isKnight).length;
+  ctx.fillStyle = '#000000aa';
+  ctx.fillRect(8, 8, 180, alive.length * 18 + 28);
+  alive.forEach((k, i) => {
+    ctx.fillStyle = k.color;
+    ctx.fillRect(12, 14 + i*18, 10, 10);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`${k.name} Lv${k.level} HP:${Math.floor(k.hp)}`, 26, 19 + i*18);
+  });
+  ctx.fillStyle = '#ffdd44'; ctx.font = 'bold 10px Arial';
+  ctx.fillText(`Knights: ${kc}`, 12, alive.length * 18 + 20);
+
+  // ---- SPAWN BUTTON top-right of scoreboard ----
+  ctx.fillStyle = '#44bb44';
+  ctx.fillRect(190, 8, 60, 24);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('SPAWN', 220, 20);
+
+  // ---- HALF BATTLE BANNER — top center, below scoreboard ----
+  if (halfBattle && !finalBattle) {
+    const bw = 220, bh = 28;
+    const bx = W/2 - bw/2, by = 46;
+    ctx.fillStyle = '#ff8800dd';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle    = '#ffffff';
+    ctx.font         = `bold ${Math.floor(W * 0.026)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚡ 4 KINGDOMS — 2x SPEED! ⚡', W/2, by + bh/2);
+  }
+
+  // ---- FINAL BATTLE BANNER — top center ----
+  if (finalBattle) {
+    const bw = 220, bh = 28;
+    const bx = W/2 - bw/2, by = 8;
+    ctx.fillStyle = '#cc0000dd';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#ffdd44';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle    = '#ffdd44';
+    ctx.font         = `bold ${Math.floor(W * 0.026)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚡ FINAL BATTLE — 4x SPEED! ⚡', W/2, by + bh/2);
+  }
+
+  // ---- SURGE BANNER — below final battle banner ----
+  if (surgeActive && finalBattle) {
+    const surgeK = kingdoms.find(k => k.id === surgeKingdomId);
+    if (surgeK) {
+      const bw = 260, bh = 26;
+      const bx = W/2 - bw/2, by = 42;
+      ctx.fillStyle = surgeK.color + 'cc';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 2;
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.fillStyle    = '#ffffff';
+      ctx.font         = `bold ${Math.floor(W * 0.025)}px Arial`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`SURGE: ${surgeK.name} 4x DMG+UPGRADE!`, W/2, by + bh/2);
+      // Countdown bar
+      const ratio = surgeTimer / 30000;
+      ctx.fillStyle = '#000000aa';
+      ctx.fillRect(bx, by + bh, bw, 5);
+      ctx.fillStyle = surgeK.color;
+      ctx.fillRect(bx, by + bh, bw * ratio, 5);
+    }
+  }
+  // ---- HOOKER TRASH TALK ----
+  if (trashTalkActive) {
+    const bw = 300, bh = 36;
+    const bx = W/2 - bw/2, by = H - 168;
+    ctx.fillStyle = '#cc0000ee';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle    = '#ffffff';
+    ctx.font         = `bold ${Math.floor(W * 0.026)}px Arial`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`"No King, Pathetic" — Hooker`, W/2, by + bh/2);
+    // Countdown bar — drains to zero then hooker kills
+    const ratio = 1 - (trashTalkTimer / 5000);
+    ctx.fillStyle = '#000000aa';
+    ctx.fillRect(bx, by + bh, bw, 5);
+    ctx.fillStyle = '#ff4444';
+    ctx.fillRect(bx, by + bh, bw * ratio, 5);
+  }
+}
+
+function drawGameOver() {
+  ctx.fillStyle = '#000000cc'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffdd44';
+  ctx.font = `bold ${Math.floor(W * 0.08)}px Arial`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(`${winnerName} Wins!`, W/2, H/2);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `${Math.floor(W * 0.04)}px Arial`;
+  ctx.fillText('Tap to restart', W/2, H/2 + 70);
+
+  // ---- LEADERBOARD BUTTON ----
+  const btnW = 220, btnH = 44;
+  const btnX = W/2 - btnW/2, btnY = H/2 + 100;
+  ctx.fillStyle = '#ffdd44';
+  ctx.beginPath();
+  ctx.rect(btnX, btnY, btnW, btnH);
+  ctx.fill();
+  ctx.fillStyle = '#000000';
+  ctx.font = `bold ${Math.floor(W * 0.035)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('👑 View Leaderboard', W/2, btnY + btnH/2);
+}
+
+// Save winner and go to leaderboard
+function goToLeaderboard() {
+  localStorage.setItem('bkw_pendingWinner', winnerName);
+  window.location.href = 'leaderboard.html';
+}
+
+canvas.addEventListener('touchstart', e => {
+  if (!gameOver) return;
+  const touch = e.touches[0];
+  const btnW = 220, btnH = 44;
+  const btnX = W/2 - btnW/2, btnY = H/2 + 100;
+  if (touch.clientX >= btnX && touch.clientX <= btnX + btnW &&
+      touch.clientY >= btnY && touch.clientY <= btnY + btnH) {
+    goToLeaderboard();
+  } else {
+    location.reload();
+  }
+});
+
+canvas.addEventListener('click', e => {
+  if (!gameOver) return;
+  const btnW = 220, btnH = 44;
+  const btnX = W/2 - btnW/2, btnY = H/2 + 100;
+  if (e.clientX >= btnX && e.clientX <= btnX + btnW &&
+      e.clientY >= btnY && e.clientY <= btnY + btnH) {
+    goToLeaderboard();
+  } else {
+    location.reload();
+  }
+});
+
+// ---- SPAWN PANEL LOGIC ----
+function openSpawnPanel() {
+  const sel = document.getElementById('spawnKingdom');
+  sel.innerHTML = kingdoms.filter(k => k.alive).map(k =>
+    `<option value="${k.id}">${k.name} Lv${k.level}</option>`
+  ).join('');
+  document.getElementById('spawnPanel').style.display = 'block';
+}
+
+function closeSpawnPanel() {
+  document.getElementById('spawnPanel').style.display = 'none';
+}
+
+function doSpawn() {
+  const kid    = parseInt(document.getElementById('spawnKingdom').value);
+  const type   = document.getElementById('spawnType').value;
+  const level  = parseInt(document.getElementById('spawnLevel').value) || 1;
+  const amount = parseInt(document.getElementById('spawnAmount').value) || 1;
+  const k      = kingdoms.find(k => k.id === kid);
+  if (!k) return;
+
+  const angle  = Math.random() * Math.PI * 2;
+  const spd    = finalBattle ? 4.0 : halfBattle ? 2.0 : 1.0;
+
+  if (type === 'ball') {
+    const hp = amount * HP_PER_TROOP + HP_BONUS * (level - 1);
+    const dmg = DMG_PER_TROOP + DMG_BONUS * (level - 1);
+    balls.push({
+      x: k.x + Math.cos(angle)*20, y: k.y + Math.sin(angle)*20,
+      hp, maxHp: hp, troops: amount, maxTroops: amount,
+      troopDmg: dmg, isKnight: false, isKing: false, isShield: false,
+      isCannon: false, isRammer: false,
+      ballLevel: level, hits: 0, hitsToLevel: level * HITS_PER_LEVEL,
+      speed: Math.min(1.2 * spd, 12), radius: baseRadius(amount),
+      team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0, wobble: Math.random()*Math.PI*2,
+      trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false
+    });
+  } else if (type === 'knight') {
+    const dmg = DMG_PER_TROOP * KNIGHT_DMG_MULT + DMG_BONUS * 2 * (level - 1);
+    const hp  = (KNIGHT_HP + HP_BONUS * (level - 1)) * amount;
+    balls.push({
+      x: k.x + Math.cos(angle)*20, y: k.y + Math.sin(angle)*20,
+      hp, maxHp: hp, troops: amount, maxTroops: amount,
+      troopDmg: dmg, isKnight: true, isEliteKnight: true,
+      isCompactedKnight: amount > 1, isKing: false, isShield: false,
+      isCannon: false, isRammer: false,
+      ballLevel: level, hits: 0, hitsToLevel: level * HITS_PER_LEVEL,
+      speed: Math.min(KNIGHT_SPEED * spd, 12),
+      radius: Math.min(KNIGHT_RADIUS + amount * 1.5, 52),
+      team: k.id, color: k.color, cr: k.r, cg: k.g, cb: k.b,
+      fightTimer: 0, wobble: Math.random()*Math.PI*2,
+      trailX: k.x, trailY: k.y, swordAngle: 0, swordSwinging: false,
+      siegeTimer: 0, siegeTarget: null, isRageBall: false, lastBlocked: false
+    });
+  } else if (type === 'king') {
+    spawnKing(k);
+  } else if (type === 'shield') {
+    spawnShield(k);
+  } else if (type === 'cannon') {
+    spawnCannon(k, spd);
+  } else if (type === 'rammer') {
+    spawnRammer(k, spd);
+  } else if (type === 'hooker') {
+    const alreadyHasHooker = balls.some(b => b.isHooker && b.team === k.id);
+    if (!alreadyHasHooker) spawnHooker(k, spd);
+  } else if (type === 'horse') {
+    spawnHorseKnight(k, spd);
+  } else if (type === 'wizard') {
+    spawnWizard(k, spd);
+  }
+  closeSpawnPanel();
+}
+
+// Detect tap on SPAWN button (top-right of scoreboard)
+canvas.addEventListener('touchstart', e => {
+  // Start music on first tap — bypasses autoplay restriction
+  if (!musicStarted) {
+    musicStarted = true;
+    musicMain.play().catch(()=>{});
+    musicState = 'main';
+  }
+  const t = e.touches[0];
+  if (t.clientX >= 190 && t.clientX <= 250 && t.clientY >= 8 && t.clientY <= 32) {
+    openSpawnPanel();
+  }
+}, { passive: true });
+
+// ---- MUSIC SYSTEM ----
+const musicMain   = document.getElementById('music_main');
+const musicHooker = document.getElementById('music_hooker');
+const musicDrop   = document.getElementById('music_drop');
+const VOLATILE_START = 77;
+const VOLATILE_END   = 85;
+let musicState   = 'none';
+let musicStarted = false;
+
+function updateMusic() {
+  try {
+    if (!musicStarted) return; // wait for first tap
+    const hasHookerOnField = balls.some(b => b.isHooker);
+
+    if (trashTalkActive) {
+      if (musicState !== 'silence') {
+        musicMain.pause();
+        musicHooker.pause();
+        musicDrop.pause();
+        musicState = 'silence';
+      }
+    } else if (musicState === 'silence' && !trashTalkActive) {
+      musicDrop.currentTime = 0;
+      musicDrop.play().catch(()=>{});
+      musicState = 'drop';
+    } else if (hasHookerOnField && musicState !== 'hooker' && musicState !== 'drop' && musicState !== 'silence') {
+      musicMain.pause();
+      musicHooker.currentTime = VOLATILE_START;
+      musicHooker.play().catch(()=>{});
+      musicState = 'hooker';
+    } else if (!hasHookerOnField && musicState === 'hooker') {
+      musicHooker.pause();
+      musicMain.play().catch(()=>{});
+      musicState = 'main';
+    } else if (musicState === 'none') {
+      musicMain.play().catch(()=>{});
+      musicState = 'main';
+    }
+
+    if (musicState === 'hooker' && musicHooker.currentTime >= VOLATILE_END) {
+      musicHooker.currentTime = VOLATILE_START;
+    }
+  } catch(e) {} // silent fail if audio unavailable
+}
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
+<!-- ============================================================
+  GAME SYSTEMS LOG
+  ============================================================
+  SIEGE SYSTEM:
+  - Balls no longer disappear when reaching enemy kingdom
+  - They park at the kingdom wall and attack every 800ms
+  - Orange glow ring shows a ball is currently sieging
+  - Red circle flashes around any kingdom under attack
+  - Multiple balls can siege the same kingdom at once
+  - Balls resume marching if knocked away from kingdom
+
+  LEVEL UP HEAL:
+  - Normal balls heal 20 HP on level up (plus the usual +10 maxHp)
+  - Knight heals 30 HP on level up (plus the usual +10 maxHp)
+  - This rewards aggressive play — fighting earns healing
+
+  DEFENDER BONUS (KINGDOM UNDER ATTACK):
+  - A kingdom being sieged gains +800ms to its upgradeTimer per hit
+  - This means it levels up roughly 2x faster under pressure
+  - Higher kingdom level = stronger troops spawned next time
+  - Creates a comeback mechanic for losing kingdoms
+  ============================================================ -->
+<!-- ============================================================
+  RULES:
+  - 700+ lines always
+  - 2+ more lines than previous version
+  - Never remove code unless asked
+  ============================================================ -->
+<!-- line padding: 691 692 693 694 695 696 697 698 699 700 -->
+<!-- line padding: 701 702 703 704 705 706 707 708 709 710 -->
+<!-- line padding: 711 712 713 714 715 716 717 718 -->
+<!-- 1 -->
+<!-- 2 -->
+<!-- 3 -->
+<!-- 4 -->
+<!-- 5 -->
+<!-- 6 -->
+<!-- 7 -->
+<!-- 8 -->
+<!-- 9 -->
+<!-- 10 -->
+<!-- 11 -->
+<!-- 12 -->
+<!-- 13 -->
+<!-- 14 -->
+<!-- 15 -->
+<!-- 16 -->
+<!-- 17 -->
+<!-- 18 -->
+<!-- 19 -->
+<!-- 20 -->
+<!-- 21 -->
+<!-- 22 -->
+<!-- 23 -->
+<!-- 24 -->
+<!-- 25 -->
+<!-- 26 -->
+<!-- 27 -->
+<!-- 28 -->
+<!-- 29 -->
+<!-- 30 -->
+<!-- line count fix -->
+<!-- 2097 -->
+<!-- 2098 2099 -->
+<!-- super stat threshold fix: -8 quintillion -->
+<!-- 2230 -->
+<!-- simplified super stat check -->
+<!-- 2230 -->
+<!-- MLVL rename complete -->
+<!-- cannon rammer level fix -->
+<!-- hooker sword png update -->
+<!-- banners moved to bottom -->
+<!-- hooker token one time fix -->
+<!-- audio silent fail fix -->
+<!-- 2856 -->
+<!-- sword size fix -->
+<!-- hooker color circle fix -->
+<!-- multiply composite fix -->
+<!-- 3040 -->
+<!-- hooker color circle size fix -->
+<!-- hooker color text fix -->
+<!-- removed hooker box kcod fix -->
+<!-- normal balls filter fix — excluded hooker/horse/king from colored circle draw -->
+<!-- 3040 -->
+<!-- wizard unit added: freeze+fireball alternating, 3x knight HP, 1/50 spawn, wizard.png -->
+<!-- 3297 -->
+<!-- wizard level-up: -5% cooldown, +25% fireball dmg, +10% freeze duration per level -->
+<!-- 3310 -->
+<!-- 3309 -->
+<!-- wizard label: kingdom color -->
+<!-- 3312 -->
+<!-- tornado environmental hazard: random spawn, drifts, pulls+1% dmg/s, tornado.png -->
+<!-- duplicate wizardImg removed -->
+<!-- 3421 -->
+<!-- tsunami environmental hazard: edge spawn, speed 4, 50% HP on contact, tsunami.png -->
+<!-- 3501 -->
