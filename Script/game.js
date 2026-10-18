@@ -10,7 +10,7 @@ const POP_GROWTH_MIN = 3;  // people per second
 const POP_GROWTH_MAX = 15;
 // Per-capita multiplier applied every second, by education/healthcare tier
 const PER_CAPITA_GROWTH = {
-  best: 1.001,    // +0.1% per second
+  best: 1.01,     // +1% per second
   middle: 1.008,  // +0.8% per second
   worst: 1.0,     // no change
 };
@@ -24,6 +24,7 @@ const game = { kingdoms: [], byId: {}, troops: {}, units: [], over: false, winne
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const areAllied = (a, b) => game.byId[a].allies.includes(b);
 
 function toScreen(x, y) {
   return [
@@ -52,6 +53,7 @@ async function boot() {
       perCapita: START_PER_CAPITA,
       popGrowth: POP_GROWTH_MIN + Math.random() * (POP_GROWTH_MAX - POP_GROWTH_MIN),
       tier: 'middle',
+      allies: [],
     }));
     game.kingdoms.forEach(k => (game.byId[k.id] = k));
     assignTiers();
@@ -64,11 +66,20 @@ async function boot() {
 }
 
 // Pick one kingdom with the best education and healthcare and one with the worst.
-// Everything else stays in the middle tier.
+// Everything else stays in the middle tier. The worst kingdom forms an alliance
+// with a random middle kingdom for protection.
 function assignTiers() {
   const order = [...game.kingdoms].sort(() => Math.random() - 0.5);
   if (order.length > 0) order[0].tier = 'best';
   if (order.length > 1) order[1].tier = 'worst';
+
+  const poor = game.kingdoms.find(k => k.tier === 'worst');
+  const middles = game.kingdoms.filter(k => k.tier === 'middle');
+  if (poor && middles.length) {
+    const ally = middles[Math.floor(Math.random() * middles.length)];
+    poor.allies.push(ally.id);
+    ally.allies.push(poor.id);
+  }
 }
 
 function pickTroop(k) {
@@ -96,7 +107,7 @@ function spawn(k) {
 function nearestEnemyCapital(u) {
   let best = null, bd = Infinity;
   for (const k of game.kingdoms) {
-    if (!k.alive || k.id === u.kid) continue;
+    if (!k.alive || k.id === u.kid || areAllied(u.kid, k.id)) continue;
     const d = dist(u, k.capital);
     if (d < bd) { bd = d; best = k; }
   }
@@ -130,7 +141,7 @@ function update(dt) {
     // Prefer the nearest enemy unit in sight; otherwise march on the nearest enemy capital.
     let target = null, best = SIGHT * SIGHT;
     for (const o of game.units) {
-      if (o.kid === u.kid || o.hp <= 0) continue;
+      if (o.kid === u.kid || o.hp <= 0 || areAllied(u.kid, o.kid)) continue;
       const d2 = (o.x - u.x) ** 2 + (o.y - u.y) ** 2;
       if (d2 < best) { best = d2; target = o; }
     }
@@ -157,7 +168,9 @@ function update(dt) {
         target.hp -= t.damage;
         if (t.splash) {
           for (const o of game.units) {
-            if (o !== target && o.kid !== u.kid && dist(o, target) <= t.splash) o.hp -= t.damage * 0.5;
+            if (o !== target && o.kid !== u.kid && !areAllied(u.kid, o.kid) && dist(o, target) <= t.splash) {
+              o.hp -= t.damage * 0.5;
+            }
           }
         }
       }
@@ -245,6 +258,7 @@ function drawBar(x, y, w, h, ratio, color) {
 function updateHud() {
   const rows = game.kingdoms.map(k => {
     const count = game.units.filter(u => u.kid === k.id).length;
+    const allies = k.allies.map(id => game.byId[id].name).join(', ') || '-';
     return `<div class="row ${k.alive ? '' : 'dead'}">
       <span class="dot" style="background:${k.color}"></span>
       <strong>${k.name}</strong>
@@ -253,6 +267,7 @@ function updateHud() {
       <span>Pop ${Math.floor(k.population)}</span>
       <span>Per cap ${k.perCapita.toFixed(2)}</span>
       <span>${k.tier}</span>
+      <span>Allies ${allies}</span>
       <span>Troops ${count}</span>
     </div>`;
   }).join('');
