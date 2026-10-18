@@ -4,6 +4,17 @@ const TILE = 16;           // world pixels per tile
 const SIGHT = 14;          // tiles a unit can see enemies
 const MAX_UNITS = 600;
 
+const START_POPULATION = 1000;
+const START_PER_CAPITA = 1.1;
+const POP_GROWTH_MIN = 3;  // people per second
+const POP_GROWTH_MAX = 15;
+// Per-capita multiplier applied every second, by education/healthcare tier
+const PER_CAPITA_GROWTH = {
+  best: 1.001,    // +0.1% per second
+  middle: 1.008,  // +0.8% per second
+  worst: 1.0,     // no change
+};
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
@@ -31,15 +42,33 @@ async function boot() {
     const [troops, kingdoms] = await Promise.all([loadFolder('Troops'), loadFolder('Kingdoms')]);
     troops.forEach(t => (game.troops[t.id] = t));
     game.kingdoms = kingdoms.map(k => ({
-      ...k, gold: k.startGold, hp: k.capitalHp, maxHp: k.capitalHp, timer: 0, alive: true,
+      ...k,
+      gold: k.startGold,
+      hp: k.capitalHp,
+      maxHp: k.capitalHp,
+      timer: 0,
+      alive: true,
+      population: START_POPULATION,
+      perCapita: START_PER_CAPITA,
+      popGrowth: POP_GROWTH_MIN + Math.random() * (POP_GROWTH_MAX - POP_GROWTH_MIN),
+      tier: 'middle',
     }));
     game.kingdoms.forEach(k => (game.byId[k.id] = k));
+    assignTiers();
     resize();
     requestAnimationFrame(loop);
   } catch (err) {
     hud.textContent = 'Could not load Kingdoms/ or Troops/. Run a local server and build the index (see README).';
     console.error(err);
   }
+}
+
+// Pick one kingdom with the best education and healthcare and one with the worst.
+// Everything else stays in the middle tier.
+function assignTiers() {
+  const order = [...game.kingdoms].sort(() => Math.random() - 0.5);
+  if (order.length > 0) order[0].tier = 'best';
+  if (order.length > 1) order[1].tier = 'worst';
 }
 
 function pickTroop(k) {
@@ -74,12 +103,19 @@ function nearestEnemyCapital(u) {
   return best;
 }
 
+function updateEconomy(k, dt) {
+  k.population += k.popGrowth * dt;
+  // Gold production = population x per-capita gold, per second
+  k.gold += k.population * k.perCapita * dt;
+  k.perCapita *= Math.pow(PER_CAPITA_GROWTH[k.tier], dt);
+}
+
 function update(dt) {
   if (game.over) return;
 
   for (const k of game.kingdoms) {
     if (!k.alive) continue;
-    k.gold = Math.min(k.maxGold, k.gold + k.income * dt);
+    updateEconomy(k, dt);
     k.timer += dt;
     if (k.timer >= k.spawnInterval) {
       k.timer = 0;
@@ -214,6 +250,9 @@ function updateHud() {
       <strong>${k.name}</strong>
       <span>HP ${Math.ceil(k.hp)}</span>
       <span>Gold ${Math.floor(k.gold)}</span>
+      <span>Pop ${Math.floor(k.population)}</span>
+      <span>Per cap ${k.perCapita.toFixed(2)}</span>
+      <span>${k.tier}</span>
       <span>Troops ${count}</span>
     </div>`;
   }).join('');
