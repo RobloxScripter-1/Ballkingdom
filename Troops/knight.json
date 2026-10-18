@@ -1,0 +1,11 @@
+{
+  "id": "knight",
+  "name": "Knight Ball",
+  "cost": 30,
+  "hp": 80,
+  "damage": 9,
+  "range": 1,
+  "speed": 2.8,
+  "cooldown": 1.0,
+  "radius": 0.6
+}
