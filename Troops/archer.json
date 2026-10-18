@@ -1,0 +1,11 @@
+{
+  "id": "archer",
+  "name": "Archer Ball",
+  "cost": 15,
+  "hp": 18,
+  "damage": 5,
+  "range": 5,
+  "speed": 2.0,
+  "cooldown": 1.2,
+  "radius": 0.4
+}
