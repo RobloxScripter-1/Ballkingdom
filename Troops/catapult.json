@@ -1,0 +1,12 @@
+{
+  "id": "catapult",
+  "name": "Catapult Ball",
+  "cost": 45,
+  "hp": 40,
+  "damage": 14,
+  "range": 9,
+  "speed": 1.0,
+  "cooldown": 2.5,
+  "radius": 0.7,
+  "splash": 1.5
+}
