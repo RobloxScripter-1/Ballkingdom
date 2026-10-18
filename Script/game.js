@@ -35,9 +35,19 @@ function toScreen(x, y) {
   ];
 }
 
+async function fetchJson(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`${path} returned HTTP ${res.status}`);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`${path} is not valid JSON (${e.message})`);
+  }
+}
+
 async function loadFolder(folder) {
-  const files = await (await fetch(`${folder}/index.json`)).json();
-  return Promise.all(files.map(f => fetch(`${folder}/${f}`).then(r => r.json())));
+  const files = await fetchJson(`${folder}/index.json`);
+  return Promise.all(files.map(f => fetchJson(`${folder}/${f}`)));
 }
 
 async function boot() {
@@ -62,7 +72,7 @@ async function boot() {
     resize();
     requestAnimationFrame(loop);
   } catch (err) {
-    hud.textContent = 'Could not load Kingdoms/ or Troops/. Run a local server and build the index (see README).';
+    hud.textContent = 'Load error: ' + err.message;
     console.error(err);
   }
 }
