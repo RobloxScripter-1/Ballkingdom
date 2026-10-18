@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ballkingdom</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f1e; }
+    canvas { display: block; cursor: grab; touch-action: none; }
+    canvas:active { cursor: grabbing; }
+    #hud {
+      position: fixed; top: 12px; left: 12px; min-width: 240px;
+      background: rgba(11, 15, 30, 0.82); border: 2px solid #f2c14e;
+      border-radius: 12px; padding: 12px 14px; color: #f5f1e6;
+      font: 800 14px/1.3 "Nunito", system-ui, sans-serif;
+    }
+    .row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+    .row strong { font: 22px "Lilita One", cursive; min-width: 80px; }
+    .row span:not(.dot) { opacity: 0.85; }
+    .row.dead { opacity: 0.35; text-decoration: line-through; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #f5f1e6; }
+    .winner { font: 28px "Lilita One", cursive; color: #f2c14e; margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">Loading kingdoms...</div>
+  <script src="Script/game.js"></script>
+</body>
+</html>
