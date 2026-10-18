@@ -8,11 +8,13 @@ const START_POPULATION = 1000;
 const START_PER_CAPITA = 1.1;
 const POP_GROWTH_MIN = 3;  // people per second
 const POP_GROWTH_MAX = 15;
+const POOR_POP_GROWTH_MIN = 6; // poor economies keep a high population rate
+const POOR_POP_GROWTH_MAX = 7;
 // Per-capita multiplier applied every second, by education/healthcare tier
 const PER_CAPITA_GROWTH = {
   best: 1.01,     // +1% per second
   middle: 1.008,  // +0.8% per second
-  worst: 1.0,     // no change
+  worst: 1.0009,  // +0.09% per second
 };
 
 const canvas = document.getElementById('game');
@@ -75,6 +77,9 @@ function assignTiers() {
 
   const poor = game.kingdoms.find(k => k.tier === 'worst');
   const middles = game.kingdoms.filter(k => k.tier === 'middle');
+  if (poor) {
+    poor.popGrowth = POOR_POP_GROWTH_MIN + Math.random() * (POOR_POP_GROWTH_MAX - POOR_POP_GROWTH_MIN);
+  }
   if (poor && middles.length) {
     const ally = middles[Math.floor(Math.random() * middles.length)];
     poor.allies.push(ally.id);
@@ -258,7 +263,6 @@ function drawBar(x, y, w, h, ratio, color) {
 function updateHud() {
   const rows = game.kingdoms.map(k => {
     const count = game.units.filter(u => u.kid === k.id).length;
-    const allies = k.allies.map(id => game.byId[id].name).join(', ') || '-';
     return `<div class="row ${k.alive ? '' : 'dead'}">
       <span class="dot" style="background:${k.color}"></span>
       <strong>${k.name}</strong>
@@ -267,7 +271,7 @@ function updateHud() {
       <span>Pop ${Math.floor(k.population)}</span>
       <span>Per cap ${k.perCapita.toFixed(2)}</span>
       <span>${k.tier}</span>
-      <span>Allies ${allies}</span>
+      <span>Allies ${k.allies.map(id => game.byId[id].name).join(', ') || '-'}</span>
       <span>Troops ${count}</span>
     </div>`;
   }).join('');
