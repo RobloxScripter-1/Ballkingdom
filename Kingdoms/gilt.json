@@ -1,0 +1,17 @@
+{
+  "id": "gilt",
+  "name": "Gilt",
+  "color": "#ffbe0b",
+  "capital": { "x": 15, "y": 105 },
+  "capitalHp": 800,
+  "capitalRadius": 2,
+  "startGold": 60,
+  "maxGold": 300,
+  "income": 7,
+  "spawnInterval": 1.5,
+  "roster": [
+    { "troop": "knight", "weight": 2 },
+    { "troop": "catapult", "weight": 2 },
+    { "troop": "soldier", "weight": 3 }
+  ]
+}
