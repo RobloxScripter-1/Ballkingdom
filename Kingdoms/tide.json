@@ -1,0 +1,17 @@
+{
+  "id": "tide",
+  "name": "Tide",
+  "color": "#3a86ff",
+  "capital": { "x": 105, "y": 15 },
+  "capitalHp": 800,
+  "capitalRadius": 2,
+  "startGold": 60,
+  "maxGold": 300,
+  "income": 6,
+  "spawnInterval": 1.5,
+  "roster": [
+    { "troop": "archer", "weight": 5 },
+    { "troop": "soldier", "weight": 3 },
+    { "troop": "catapult", "weight": 1 }
+  ]
+}
