@@ -1,0 +1,11 @@
+{
+  "id": "soldier",
+  "name": "Soldier Ball",
+  "cost": 10,
+  "hp": 30,
+  "damage": 4,
+  "range": 0.8,
+  "speed": 2.2,
+  "cooldown": 0.8,
+  "radius": 0.45
+}
