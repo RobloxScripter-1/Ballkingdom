@@ -1,0 +1,17 @@
+{
+  "id": "ember",
+  "name": "Ember",
+  "color": "#e4572e",
+  "capital": { "x": 15, "y": 15 },
+  "capitalHp": 800,
+  "capitalRadius": 2,
+  "startGold": 60,
+  "maxGold": 300,
+  "income": 6,
+  "spawnInterval": 1.5,
+  "roster": [
+    { "troop": "soldier", "weight": 5 },
+    { "troop": "archer", "weight": 3 },
+    { "troop": "knight", "weight": 1 }
+  ]
+}
