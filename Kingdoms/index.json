@@ -1,4 +1,7 @@
-{
-  "name": "Ballkingdom",
-  "files": []
-}
+[
+  "ember.json",
+  "gilt.json",
+  "tide.json",
+  "verdant.json",
+  "violet.json"
+]
