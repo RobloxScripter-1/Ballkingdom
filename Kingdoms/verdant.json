@@ -1,0 +1,17 @@
+{
+  "id": "verdant",
+  "name": "Verdant",
+  "color": "#38b000",
+  "capital": { "x": 60, "y": 60 },
+  "capitalHp": 900,
+  "capitalRadius": 2,
+  "startGold": 60,
+  "maxGold": 300,
+  "income": 6,
+  "spawnInterval": 1.5,
+  "roster": [
+    { "troop": "knight", "weight": 3 },
+    { "troop": "soldier", "weight": 4 },
+    { "troop": "archer", "weight": 2 }
+  ]
+}
